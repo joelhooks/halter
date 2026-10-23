@@ -84,7 +84,8 @@ label.margin-toggle:not(.sidenote-number) { display: none; }
 }
 .sidenote code,
 .marginnote code { font-size: 0.95em; }
-sup.cite { font-size: 0.68em; line-height: 0; margin-inline-start: 0.1ch; }
+/* no margin of its own: a cite after a cite is one space from it, "[1] [2]" (UPDATE-35) */
+sup.cite { font-size: 0.68em; line-height: 0; }
 /* A citation's margin note: only on wide screens. Below that the Sources list carries it. */
 .cite-note { display: none; }
 @media (min-width: 1024px) {
@@ -133,6 +134,25 @@ sup.cite a { color: var(--accent-text); text-decoration: none; }
 @media (max-width: 760px) {
   label.margin-toggle:not(.sidenote-number) { color: var(--accent-text); cursor: pointer; display: inline; }
   label.sidenote-number { color: var(--accent-text); cursor: pointer; }
+  /* A mark inside a sentence keeps the line as it was: inline, no padding, no min size. Its 44px
+     tap area is a pseudo-element centred on it that takes no space (UPDATE-35). The sidenote
+     number's ::after prints its counter, so its tap area is ::before. Neighbouring areas may overlap. */
+  label.sidenote-number,
+  label.margin-toggle,
+  sup a,
+  a.footnote-ref { display: inline; margin: 0; max-height: none; min-height: 0; min-width: 0; padding: 0; position: relative; }
+  sup a::after,
+  a.footnote-ref::after,
+  label.margin-toggle:not(.sidenote-number)::after,
+  label.sidenote-number::before {
+    content: "";
+    height: 44px;
+    left: 50%;
+    position: absolute;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 44px;
+  }
   .sidenote,
   .marginnote { display: none; }
   .margin-toggle:checked + .sidenote,
@@ -414,19 +434,4 @@ table.got tr.st-uncertain td { color: var(--accent-text); }
   /* a link that is the whole cell is a target, not a link in running text */
   main td > a:only-child { align-items: center; display: inline-flex; min-height: 44px; min-width: 44px; }
   .table-wrap { overflow-x: visible; }
-
-  /* small marks keep their place in the line and take a 44px tap area around it */
-  label.sidenote-number,
-  label.margin-toggle,
-  label.margin-toggle:not(.sidenote-number),
-  sup a,
-  a.footnote-ref {
-    display: inline-block;
-    margin: -0.875rem -1rem;
-    max-height: none;
-    min-height: 44px;
-    min-width: 44px;
-    padding: 0.875rem 1rem;
-    text-align: center;
-  }
 }

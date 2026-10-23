@@ -9,6 +9,10 @@
 // the root, bridge and language pages the ragged right, the gap at the end of each line but the last,
 // has a median of 3ch or less and a p90 of 6ch or less. Text set in on purpose (table cells, notes,
 // the workspace's bordered panels, svg) is outside the edge check; the report counts what was measured.
+// Marks inside a sentence (UPDATE-35): at 375px no gap between line tops in a p or li is more than
+// 1.15 times that block's median gap, a line holding a superscript or margin toggle is no taller than
+// the median, two adjacent sup.cite sit at most 1ch apart, and each mark's tap area, the pseudo-element
+// drawn round it, is still at least 44 by 44px. The mark itself is measured by that area, not its box.
 // Run: bun layout.ts [base-url]. It serves dist itself when no base is given.
 import { execFileSync, spawn } from "node:child_process";
 import { readdirSync, statSync, writeFileSync } from "node:fs";
@@ -54,7 +58,76 @@ const MEASURE = `(() => {
   };
   const targets = [...document.querySelectorAll("a[href], button, input, select, textarea, summary, label.margin-toggle, [role=button]")]
     .filter((el) => visible(el) && !(el.tagName === "A" && inline(el)) && !(el.tagName === "INPUT" && el.type === "checkbox" && getComputedStyle(el).display === "none"));
-  const small = targets.filter((el) => { const r = el.getBoundingClientRect(); return r.width < 44 - 0.5 || r.height < 44 - 0.5; }).map((el) => { const r = el.getBoundingClientRect(); return name(el) + " " + Math.round(r.width) + "x" + Math.round(r.height); });
+  // a mark in a sentence: its tap area is the absolutely placed pseudo-element centred on it
+  const MARK = "sup a, a.footnote-ref, label.margin-toggle";
+  const hit = (el) => {
+    const r = el.getBoundingClientRect();
+    if (!el.matches(MARK)) return { w: r.width, h: r.height, mark: false };
+    const ps = getComputedStyle(el, el.matches("label.sidenote-number") ? "::before" : "::after");
+    if (ps.content === "none" || ps.position !== "absolute" || ps.display === "none") return { w: r.width, h: r.height, mark: true };
+    return { w: Math.max(r.width, parseFloat(ps.width) || 0), h: Math.max(r.height, parseFloat(ps.height) || 0), mark: true };
+  };
+  const small = targets.filter((el) => { const r = hit(el); return r.w < 44 - 0.5 || r.h < 44 - 0.5; }).map((el) => { const r = hit(el); return name(el) + " " + Math.round(r.w) + "x" + Math.round(r.h); });
+  const marks = targets.filter((el) => el.matches(MARK)).length;
+  // line tops in every p and li: text outside marks, grouped into lines by vertical midpoint
+  const SKIP = "sup, label.margin-toggle, .sidenote, .marginnote, .cite-note, ul, ol, pre, table, svg";
+  const lineGaps = [];
+  let blocks = 0;
+  for (const b of document.querySelectorAll("main p, main li")) {
+    if (!visible(b) || b.closest(".sidenote, .marginnote, .cite-note, table, nav, .ws")) continue;
+    const rects = [];
+    const tw = document.createTreeWalker(b, NodeFilter.SHOW_TEXT);
+    for (let n = tw.nextNode(); n; n = tw.nextNode()) {
+      if (!n.data.trim() || n.parentElement.closest(SKIP) && b.contains(n.parentElement.closest(SKIP))) continue;
+      const rg = document.createRange();
+      rg.selectNodeContents(n);
+      for (const x of rg.getClientRects()) if (x.height > 0) rects.push({ top: x.top, bottom: x.bottom });
+    }
+    const markEls = [...b.querySelectorAll(MARK)].filter((m) => m.closest("p, li") === b && visible(m)).map((m) => m.getBoundingClientRect());
+    rects.sort((x, y) => x.top - y.top);
+    const lines = [];
+    for (const x of rects) {
+      const mid = (x.top + x.bottom) / 2;
+      const last = lines[lines.length - 1];
+      if (last && mid >= last.top && mid <= last.bottom) { last.top = Math.min(last.top, x.top); last.bottom = Math.max(last.bottom, x.bottom); }
+      else lines.push({ top: x.top, bottom: x.bottom });
+    }
+    if (lines.length < 2) continue;
+    blocks++;
+    const gaps = lines.slice(1).map((l, i) => l.top - lines[i].top);
+    const sorted = [...gaps].sort((x, y) => x - y);
+    const lh = parseFloat(getComputedStyle(b).lineHeight);
+    const median = gaps.length >= 2 ? sorted[Math.floor(sorted.length / 2)] : (isFinite(lh) ? lh : gaps[0]);
+    gaps.forEach((g, i) => {
+      const hasMark = markEls.some((m) => { const mid = (m.top + m.bottom) / 2; return [lines[i], lines[i + 1]].some((l) => mid >= l.top - 2 && mid <= l.bottom + 2); });
+      if (g > median * 1.15 + 0.5) lineGaps.push(name(b).slice(0, 40) + ": gap " + Math.round(g) + "px, median " + Math.round(median) + (hasMark ? " (mark)" : ""));
+      else if (hasMark && g > median + 1) lineGaps.push(name(b).slice(0, 40) + ": a mark makes a line " + Math.round(g - median) + "px taller");
+    });
+  }
+  // adjacent cites: nothing but spaces and hidden notes between them, on one line, at most 1ch apart
+  const citeGaps = [];
+  let citePairs = 0;
+  for (const a of document.querySelectorAll("sup.cite")) {
+    if (!visible(a)) continue;
+    let n = a.nextSibling, ok = true;
+    while (n && !(n.nodeType === 1 && n.matches("sup.cite"))) {
+      if (n.nodeType === 3 ? n.data.trim() : getComputedStyle(n).display !== "none") { ok = false; break; }
+      n = n.nextSibling;
+    }
+    if (!ok || !n || !visible(n)) continue;
+    // the glyphs, not the boxes: a range over each mark's text
+    const ink = (el) => { const rg = document.createRange(); rg.selectNodeContents(el); return rg.getBoundingClientRect(); };
+    const ra = ink(a), rb = ink(n);
+    if (Math.abs(ra.top - rb.top) > 2) continue;
+    citePairs++;
+    const z = document.createElement("span");
+    z.textContent = "0".repeat(10);
+    z.style.cssText = "position:absolute;white-space:nowrap;visibility:hidden";
+    a.parentElement.appendChild(z);
+    const ch = z.getBoundingClientRect().width / 10;
+    z.remove();
+    if (rb.left - ra.right > ch + 0.5) citeGaps.push(name(a) + " " + name(n) + ": " + Math.round(rb.left - ra.right) + "px apart, 1ch is " + Math.round(ch));
+  }
   // margin notes never overlap each other (UPDATE-32 §2)
   const notes = [...document.querySelectorAll(".sidenote, .marginnote, .cite-note")].filter(visible).map((el) => ({ el, r: el.getBoundingClientRect() }));
   const overlaps = [];
@@ -74,7 +147,7 @@ const MEASURE = `(() => {
     s.remove();
     return Math.round((p.getBoundingClientRect().width / ch) * 10) / 10;
   })();
-  return JSON.stringify({ W, notes: notes.length, overlaps, measure, overflow: document.documentElement.scrollWidth > W + 1, scrollW: document.documentElement.scrollWidth, wide, preScroll, tableScroll, h1Top, targets: targets.length, small });
+  return JSON.stringify({ W, notes: notes.length, overlaps, measure, overflow: document.documentElement.scrollWidth > W + 1, scrollW: document.documentElement.scrollWidth, wide, preScroll, tableScroll, h1Top, targets: targets.length, small, marks, blocks, lineGaps, citePairs, citeGaps });
 })()`;
 
 const EDGE = `(() => {
@@ -189,6 +262,11 @@ interface Row {
   readonly targets: number;
   readonly small: ReadonlyArray<string>;
   readonly notes: number;
+  readonly marks: number;
+  readonly blocks: number;
+  readonly lineGaps: ReadonlyArray<string>;
+  readonly citePairs: number;
+  readonly citeGaps: ReadonlyArray<string>;
   readonly overlaps: ReadonlyArray<string>;
   readonly measure: number;
   readonly edge?: Edge;
@@ -232,6 +310,8 @@ for (const r of rows) {
     if (r.preScroll.length) fails.push(`${r.page} @375: ${r.preScroll.length} pre scroll sideways: ${r.preScroll.slice(0, 3).join(" | ")}`);
     if (r.tableScroll.length) fails.push(`${r.page} @375: ${r.tableScroll.length} tables scroll sideways: ${r.tableScroll.slice(0, 3).join(" | ")}`);
     if (r.h1Top > 160) fails.push(`${r.page} @375: h1 starts at ${r.h1Top}px`);
+    if (r.lineGaps.length) fails.push(`${r.page} @375: ${r.lineGaps.length} line gaps over 1.15x the block's median: ${r.lineGaps.slice(0, 3).join(" | ")}`);
+    if (r.citeGaps.length) fails.push(`${r.page} @375: ${r.citeGaps.length} adjacent cites more than 1ch apart: ${r.citeGaps.slice(0, 3).join(" | ")}`);
     if (r.small.length) fails.push(`${r.page} @375: ${r.small.length} of ${r.targets} touch targets under 44px: ${r.small.slice(0, 4).join(" | ")}`);
     const e = r.edge;
     if (e) {
@@ -257,4 +337,5 @@ const noteCount = at1440.reduce((n, r) => n + r.notes, 0);
 const measureMax = Math.max(...at1440.map((r) => r.measure));
 console.log(`layout ok: ${at375.length} pages at 375px and 1440px, no sideways page, pre or table scroll; h1 at most ${h1Max}px down; ${targetCount} touch targets all at least 44px`);
 console.log(`desktop ok: ${noteCount} margin notes at 1440px, none overlapping; widest prose measure ${measureMax}ch (at most 70)`);
+console.log(`lines ok: ${at375.reduce((n, r) => n + r.blocks, 0)} paragraphs and list items at 375px keep even line gaps (none over 1.15x the median); ${at375.reduce((n, r) => n + r.marks, 0)} marks in sentences add no height and keep 44px tap areas; ${at375.reduce((n, r) => n + r.citePairs, 0)} adjacent cite pairs within 1ch`);
 console.log(`edge ok: ${measured} texts at 375px start on E=${at375[0]?.edge?.E}px (lists 2ch per level) and end by ${(at375[0]?.W ?? 375) - (at375[0]?.edge?.E ?? 0)}px; ragged right median/p90/max: ${ragged.join(", ")}`);
