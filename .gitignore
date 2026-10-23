@@ -1,0 +1,26 @@
+# Deny by default: only the allowlisted public tree is tracked.
+/*
+!/.gitignore
+!/README.md
+!/LICENSE
+!/LANGUAGE.md
+!/package.json
+!/bun.lock
+!/tsconfig.json
+!/vite.config.ts
+!/site.ts
+!/smoke.ts
+!/gate.ts
+!/layout.ts
+!/publish.ts
+!/checks.test.ts
+!/props.test.ts
+!/src/
+!/site/
+# never public
+research/
+dist/
+dist-client/
+node_modules/
+.wzrrd/
+shots/

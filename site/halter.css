@@ -1,0 +1,432 @@
+/* halter's additions, loaded after rat.css (never edited). Tufte ideas on ratstack's look:
+   sidenotes and margin notes in a wider right popout column, full-bleed figures, small
+   multiples, and Lisp highlighting on rat's --code-* variables. Light ground only. */
+:root {
+  --mute: #595959; /* rat's muted prose grey, 7:1 on white */
+  --rule: #ccd0da; /* rat's border */
+  --sel: var(--code-highlight);
+  /* rat's --code-muted is 4.37:1 on #eff1f5, under AA; comments and parens use this instead (5.3:1) */
+  --code-comment: #5f6276;
+  --note-w: clamp(13rem, 24vw, 24rem);
+  --note-gap: 2.5rem;
+  --pain: #a9c4de;
+  --dream: #d3b3dd;
+  --fix: #e8b48a;
+  --after: #a9cfa0;
+  --none: #ccc;
+  --bad: #a1271c;
+  --warn: #8a5a00;
+  --ok: #2f6b3a;
+}
+
+/* ---------- shell ---------- */
+.site-nav .brand strong { letter-spacing: 0.02em; }
+.site-links a[aria-current] { color: inherit; font-weight: bold; text-decoration: none; }
+/* rat keeps each link group on one line; on a phone a long group may wrap instead of overflowing */
+.site-links ul { flex-wrap: wrap; }
+/* the footer's links: facts, machine, glossary, bibliography, agent guide */
+.foot-links ul { display: flex; flex-wrap: wrap; list-style: none; margin: 0 0 0.5rem; padding: 0; }
+.foot-links li:not(:last-child)::after { content: " ·"; padding-inline-end: 0.6ch; }
+body > footer p { margin: 0; }
+/* a measure of 70 characters, not rat's 80 (UPDATE-32 §2). 42em is 70 characters of a 0.6em
+   monospace face; Chrome resolves ch here to 11px, not the face's 9.6, so 70ch measured 75. */
+main {
+  grid-template-columns:
+    [full-bleed-start] minmax(1rem, 1fr)
+    [popout-start] minmax(0, 14ch)
+    [content-start] min(42em, calc(100% - 2rem)) [content-end]
+    minmax(0, 14ch) [popout-end]
+    minmax(1rem, 1fr) [full-bleed-end];
+}
+body > :not(main) { max-width: 42em; }
+.status { color: var(--mute); font-size: 0.875rem; margin: 0 0 var(--space-small); }
+.plain { font-size: 1.0625rem; margin-top: 0; }
+.mute { color: var(--mute); }
+.small { font-size: 0.875rem; }
+a.term { text-decoration-style: dotted; }
+body > footer { border-top: 1px solid var(--rule); color: var(--mute); font-size: 0.875rem; margin-top: 3rem; padding-top: var(--space-small); }
+.diagram { background: transparent; border: 0; border-inline-start: 2px solid var(--rule); color: var(--code-ink); padding-block: 0.25rem; }
+details summary { cursor: pointer; color: var(--mute); font-size: 0.875rem; }
+.glossary dt { font-weight: bold; margin-top: var(--space-small); }
+.glossary dd { margin: 0 0 0 2ch; }
+.check-def { margin-block: var(--space-section); }
+.check-def h3 { margin-bottom: 0; }
+ul.noted > li { margin-block: 0.25rem 1rem; }
+
+/* tables: rat draws every cell border; data tables here read better with rules only */
+main table:not(.ratgrid) th,
+main table:not(.ratgrid) td { border: 0; border-bottom: 1px solid var(--rule); padding: 0.25rem 1.5ch 0.25rem 0; }
+main table:not(.ratgrid) th { border-bottom-color: currentColor; color: var(--mute); font-weight: normal; }
+.table-wrap { margin-block: 1rem; overflow-x: auto; }
+.table-wrap table { min-width: 0; }
+
+/* ---------- sidenotes and margin notes ---------- */
+body { counter-reset: sidenote-counter; }
+.sidenote-number { counter-increment: sidenote-counter; }
+.sidenote-number::after,
+.sidenote::before { color: var(--accent-text); font-size: 0.7em; position: relative; vertical-align: baseline; }
+.sidenote-number::after { content: counter(sidenote-counter); left: 0.1ch; top: -0.5em; }
+.sidenote::before { content: counter(sidenote-counter) " "; top: -0.35em; }
+input.margin-toggle { display: none; }
+label.sidenote-number { display: inline-block; max-height: 2rem; }
+label.margin-toggle:not(.sidenote-number) { display: none; }
+.sidenote,
+.marginnote {
+  clear: right;
+  color: var(--code-ink);
+  float: right;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  margin-block: 0.2rem 0.6rem;
+  margin-right: calc(-1 * (var(--note-w) + var(--note-gap)));
+  position: relative;
+  width: var(--note-w);
+}
+.sidenote code,
+.marginnote code { font-size: 0.95em; }
+sup.cite { font-size: 0.68em; line-height: 0; margin-inline-start: 0.1ch; }
+/* A citation's margin note: only on wide screens. Below that the Sources list carries it. */
+.cite-note { display: none; }
+@media (min-width: 1024px) {
+  main.cites {
+    grid-template-columns:
+      [full-bleed-start] minmax(1rem, 1fr)
+      [popout-start content-start] min(42em, calc(100% - 2rem - var(--note-gap) - var(--note-w))) [content-end]
+      calc(var(--note-gap) + var(--note-w)) [popout-end]
+      minmax(1rem, 1fr) [full-bleed-end];
+  }
+  body:has(main.cites) > :not(main) { max-width: calc(42em + var(--note-gap) + var(--note-w)); }
+  main.cites > figure.fullwidth { width: min(calc(42em + var(--note-gap) + var(--note-w)), calc(100% - 2rem)); }
+  .cite-note {
+    clear: right;
+    color: var(--mute);
+    display: block;
+    float: right;
+    font-size: 0.75rem;
+    line-height: 1.35;
+    margin-block: 0.2rem 0.6rem;
+    margin-right: calc(-1 * (var(--note-w) + var(--note-gap)));
+    position: relative;
+    width: var(--note-w);
+  }
+  /* a citation inside a table, list marker or figure has no margin to reach */
+  td .cite-note, th .cite-note, figcaption .cite-note, .sidenote .cite-note, .marginnote .cite-note { display: none; }
+}
+sup.cite a { color: var(--accent-text); text-decoration: none; }
+.cite-inline { color: var(--accent-text); text-decoration: none; }
+
+/* A page with notes widens its right popout and puts the column pair in the middle. */
+@media (min-width: 761px) {
+  main.notes {
+    grid-template-columns:
+      [full-bleed-start] minmax(1rem, 1fr)
+      [popout-start content-start] min(42em, calc(100% - 2rem - var(--note-gap) - var(--note-w))) [content-end]
+      calc(var(--note-gap) + var(--note-w)) [popout-end]
+      minmax(1rem, 1fr) [full-bleed-end];
+  }
+  body:has(main.notes) > :not(main) { max-width: calc(42em + var(--note-gap) + var(--note-w)); }
+  /* full-bleed, but no wider than the text and its notes, so the edges line up */
+  main.notes > figure.fullwidth { width: min(calc(42em + var(--note-gap) + var(--note-w)), calc(100% - 2rem)); }
+}
+
+/* 760px and below: notes fold into tap-to-open notes (checkbox, no JS). */
+@media (max-width: 760px) {
+  label.margin-toggle:not(.sidenote-number) { color: var(--accent-text); cursor: pointer; display: inline; }
+  label.sidenote-number { color: var(--accent-text); cursor: pointer; }
+  .sidenote,
+  .marginnote { display: none; }
+  .margin-toggle:checked + .sidenote,
+  .margin-toggle:checked + .marginnote {
+    border-inline-start: 2px solid var(--accent);
+    clear: both;
+    display: block;
+    float: none;
+    margin: 0.5rem 0;
+    padding-inline-start: 1ch;
+    width: auto;
+  }
+}
+
+/* ---------- figures ---------- */
+figure { margin-inline: 0; }
+figcaption { color: var(--mute); }
+main > figure.fullwidth,
+main > .multiples-fig {
+  grid-column: full-bleed;
+  justify-self: center;
+  width: min(176ch, calc(100% - 2rem));
+}
+.side-by-side { display: grid; gap: 2ch; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.side-by-side pre.code { margin: 0; max-height: 44rem; }
+.side-by-side h4 { margin-top: 0; }
+
+/* ---------- syntax: halter tokens on rat's code variables ---------- */
+pre.code { color: var(--code-ink); }
+pre .f { color: var(--accent-text); font-weight: bold; }   /* forms: path, state, send */
+pre .k { color: var(--code-keyword); }                      /* :keywords */
+pre .h { color: var(--code-keyword); font-weight: bold; }   /* other heads */
+pre .b { color: var(--code-keyword); font-style: italic; }  /* bare words: closed, done, skip */
+pre .s,
+pre .n { color: var(--code-literal); }                      /* strings, numbers, durations */
+pre .v { color: var(--code-literal); font-style: italic; }  /* ?query vars */
+pre .y { color: var(--code-ink); }
+pre .c { color: var(--code-comment); font-style: italic; }
+pre .p { color: var(--code-comment); }
+pre.numbered .ln { display: block; }
+pre.numbered .ln i { color: var(--code-comment); display: inline-block; font-style: normal; user-select: none; width: 3ch; }
+pre.numbered .ln.refuse { background: #fbe3e1; }
+pre.numbered .ln.alarm { background: #fbf0d6; }
+
+/* ---------- arc strips and small multiples ---------- */
+svg.arc { display: block; height: auto; overflow: visible; width: 100%; }
+svg.arc .axis { stroke: var(--rule); }
+svg.arc .tick { stroke: var(--mute); stroke-width: 0.6; }
+svg.arc .tick.ev { stroke-dasharray: 2 2; }
+svg.arc text { fill: var(--mute); font: 9px ui-monospace, Menlo, monospace; }
+svg.arc .key { fill: currentColor; text-anchor: middle; }
+svg.arc .lab.ev { font-style: italic; }
+.b-pain { background: var(--pain); fill: var(--pain); }
+.b-dream { background: var(--dream); fill: var(--dream); }
+.b-fix { background: var(--fix); fill: var(--fix); }
+.b-after { background: var(--after); fill: var(--after); }
+.b-none { background: var(--none); fill: var(--none); }
+.spark.sent { background: #111; fill: #111; }
+.spark.skipped { background: var(--mute); fill: var(--mute); opacity: 0.5; }
+.legend { color: var(--mute); font-size: 0.8125rem; }
+.legend .sw { display: inline-block; height: 0.7em; margin: 0 0.5ch 0 1.5ch; width: 0.7em; }
+.multiples { display: grid; gap: 1rem 3ch; grid-template-columns: repeat(auto-fill, minmax(min(32ch, 100%), 1fr)); }
+.multiples a { color: inherit; text-decoration: none; }
+.multiples a:hover .t { text-decoration: underline; }
+.multiples .t { font-weight: bold; }
+.multiples .m { color: var(--mute); font-size: 0.8125rem; }
+svg.chain { height: auto; max-width: 260px; width: 100%; }
+svg.chain text { fill: currentColor; font: 11px ui-monospace, Menlo, monospace; }
+svg.chain .elab { fill: var(--mute); font-style: italic; }
+svg.chain .edge { fill: none; stroke: currentColor; stroke-width: 0.8; }
+svg.chain text.dead { fill: var(--mute); }
+svg.chain path.dead { fill: none; stroke: var(--mute); stroke-dasharray: 3 2; }
+
+/* ---------- the workspace (as-of slider, printout, editor) ---------- */
+.ws .asof { margin: 0.25rem 0 0.75rem; }
+.ws .slider { accent-color: var(--accent-text); height: 2rem; width: 100%; }
+.ws .txline { font-size: 0.875rem; margin: 0.25rem 0; min-height: 3em; }
+/* entered, finished, reached target: three numbers side by side, moved by the slider */
+.outcomes { display: flex; flex-wrap: wrap; gap: 1rem 4ch; margin-block: 1rem 0.5rem; }
+.outcomes .num { display: flex; flex-direction: column; min-width: 10ch; }
+.outcomes .num b { font-size: 2rem; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.outcomes .num span { color: var(--mute); font-size: 0.8125rem; }
+.outcomes .num.reached b { color: var(--ok); }
+ul.outcome-notes { font-size: 0.875rem; margin-block: 0 1rem; }
+ul.outcome-notes li.honest b { color: var(--bad); }
+td.tg-reached { color: var(--ok); }
+td.tg-missed { color: var(--bad); }
+td.tg-watching { color: var(--mute); }
+.ws-grid { display: grid; gap: 3ch; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); }
+.ws-grid pre.code { margin-top: 0; }
+.ws-side h4 { margin: 0.75rem 0 0.25rem; }
+.ws-side table { font-size: 0.875rem; width: 100%; }
+.ws-side tr.out td { color: var(--mute); font-style: italic; }
+.tabs { display: flex; flex-wrap: wrap; gap: 0.25rem 2ch; margin: 0.25rem 0 0.5rem; }
+/* Structure / Content: which file the printout shows, set apart from the tabs */
+.tabs .filetoggle { border-inline-start: 1px solid var(--rule); display: flex; gap: 1.5ch; margin-inline-start: auto; padding-inline-start: 2ch; }
+pre.content-file { border-inline-start: 3px solid var(--accent); }
+.tabs button,
+.buttons button { background: none; border: 0; border-bottom: 2px solid transparent; color: var(--mute); min-height: 2.25rem; padding: 0.25rem 0; }
+.tabs button[aria-pressed="true"] { border-bottom-color: var(--accent); color: inherit; font-weight: bold; }
+.buttons button { border-bottom-color: var(--rule); color: inherit; margin-right: 2ch; }
+.buttons button.primary { border-bottom-color: var(--accent); color: var(--accent-text); font-weight: bold; }
+.verdict { margin: 0.25rem 0; }
+.verdict.bad b { color: var(--bad); }
+.verdict.good b { color: var(--ok); }
+ul.findings { font-size: 0.875rem; list-style: none; padding: 0; }
+ul.findings li { border-inline-start: 3px solid var(--rule); margin: 0.6rem 0; padding-inline-start: 1ch; }
+ul.findings li.refuse { border-inline-start-color: var(--bad); }
+ul.findings li.alarm { border-inline-start-color: var(--warn); }
+ul.findings li.waived { opacity: 0.75; }
+ul.findings li.pending { border-inline-start-style: dashed; }
+ul.findings .pending { font-style: italic; }
+ul.findings button { font-size: inherit; margin-inline-start: 0.5ch; }
+.sev { font-size: 0.8em; font-weight: bold; letter-spacing: 0.08em; text-transform: uppercase; }
+ol.hist { font-size: 0.875rem; list-style: none; max-height: 34rem; overflow-y: auto; padding: 0; }
+ol.hist li { border-bottom: 1px solid var(--rule); padding: 0.4rem 0; }
+ol.hist li.here { background: var(--sel); }
+ol.hist li.later { opacity: 0.5; }
+ol.hist li.event { color: var(--mute); }
+.src { font-size: 0.8em; letter-spacing: 0.06em; text-transform: uppercase; }
+.src-inferred { color: var(--warn); }
+.src-asked { color: var(--ok); }
+textarea.lisp-edit { background: #eff1f5; border: 1px solid var(--rule); border-inline-start: 3px solid var(--accent); box-sizing: border-box; color: var(--code-ink); font: inherit; font-size: 0.875rem; padding: 0.5rem 1ch; resize: vertical; width: 100%; }
+.cards { display: flex; flex-direction: column; font-size: 0.875rem; gap: 0.4rem; margin: 0.6rem 0; }
+.sendcard { align-items: center; display: flex; flex-wrap: wrap; gap: 1ch; margin: 0.2rem 0 0.2rem 2ch; }
+.commit { display: flex; flex-wrap: wrap; font-size: 0.875rem; gap: 0.6rem 2ch; }
+.commit .why { flex: 1 1 24ch; }
+.commit .why input { width: 100%; }
+select,
+.ws input:not([type="range"]):not([type="checkbox"]) { background: #fff; border: 1px solid var(--rule); color: inherit; font: inherit; font-size: 0.875rem; max-width: 100%; min-width: 0; padding: 0.15rem 0.5ch; }
+.edit-msg { font-style: italic; }
+
+/* ---------- page end ---------- */
+section.bibliography,
+section.linked-from { border-top: 1px solid var(--rule); margin-top: var(--space-section); }
+ol.bib li { margin-block: 1rem; }
+
+/* ---------- narrow screens ---------- */
+@media (max-width: 1100px) {
+  .side-by-side,
+  .ws-grid { grid-template-columns: minmax(0, 1fr); }
+}
+/* rat.css stacks tables into labelled cards on phones; halter's data tables carry no
+   data-label, so they stay tables and scroll sideways inside their wrapper instead. */
+@media (max-width: 42rem) {
+  main table:not(.ratgrid) { display: table; }
+  main table:not(.ratgrid) thead { clip-path: none; display: table-header-group; height: auto; overflow: visible; position: static; white-space: normal; width: auto; }
+  main table:not(.ratgrid) tbody { display: table-row-group; }
+  main table:not(.ratgrid) tr { border: 0; display: table-row; margin: 0; }
+  main table:not(.ratgrid) td { display: table-cell; }
+  main table:not(.ratgrid) td + td { border-top: 0; }
+}
+/* rat.css shrinks figure pre to 2.2vw on phones (fine for diagrams); the editable printout
+   and the side-by-side code stay readable and scroll instead */
+@media (max-width: 40rem) {
+  figure.ws pre.code,
+  figure .side-by-side pre.code { font-size: 0.75rem; }
+}
+
+/* On each version (D32): one row per version, the current one marked */
+table.versions { font-size: 0.875rem; width: 100%; }
+table.versions td { vertical-align: top; }
+table.versions td.num, table.versions span.num { font-variant-numeric: tabular-nums; }
+table.versions td:last-child { min-width: 24ch; }
+table.versions tr.current td:first-child { font-weight: bold; }
+table.places td.num { font-variant-numeric: tabular-nums; }
+code.move { color: var(--accent-text); }
+details.got { margin-block: 0.5rem; }
+.ws-feed { margin-block: 0.75rem 1rem; padding: 0.5rem 0.75rem; border-left: 3px solid var(--rule, #ccc); }
+.ws-feed p { margin-block: 0.25rem; }
+.ws-feed button { margin-left: 1ch; }
+table.feed { font-size: 0.875rem; width: 100%; }
+table.feed td { vertical-align: top; }
+.feed-mark { white-space: nowrap; }
+.feed-mark.pending { color: var(--accent-text); }
+.feed-mark.agent { font-weight: bold; }
+details.got > summary { cursor: pointer; }
+table.got { font-size: 0.875rem; width: 100%; table-layout: fixed; }
+table.got pre.code, table.got pre.code code { white-space: pre-wrap; overflow-wrap: anywhere; }
+table.got td { vertical-align: top; }
+table.got pre.code { margin: 0.25rem 0 0; font-size: 0.8125rem; white-space: pre-wrap; }
+table.got tr:not(.copy) td { border-bottom: 0; padding-bottom: 0; }
+table.got tr.copy td { padding-top: 0.25rem; }
+table.got tr.st-uncertain td { color: var(--accent-text); }
+
+/* ---------- 480px and below: one text edge (UPDATE-32) ----------
+   All text starts and ends on E. The one exception is a list's bullet indent. Code bleeds to
+   the screen edges with its text at E. Every touch target is at least 44px. */
+@media (max-width: 480px) {
+  :root { --E: max(1.25rem, env(safe-area-inset-left)); }
+  body > :not(main) { width: calc(100% - 2 * var(--E)); }
+  main,
+  main.notes {
+    grid-template-columns:
+      [full-bleed-start] minmax(var(--E), 1fr)
+      [popout-start content-start] min(42em, calc(100% - 2 * var(--E))) [content-end popout-end]
+      minmax(var(--E), 1fr) [full-bleed-end];
+  }
+  main > figure.fullwidth,
+  main > .multiples-fig,
+  main.notes > figure.fullwidth { width: calc(100% - 2 * var(--E)); }
+  figure { margin-inline: 0; }
+
+  /* header: halter on one row, the four links on the next, like ratstack.sh */
+  body { padding-block-start: 0.5rem; }
+  body > header { margin-bottom: 0; }
+  .breadcrumb { margin-bottom: 0; }
+  .site-nav { align-items: center; flex-wrap: wrap; gap: 0 2ch; }
+  .site-nav .brand { align-items: center; display: inline-flex; min-height: 44px; min-width: 44px; }
+  .site-links { flex-basis: 100%; gap: 0 3ch; }
+  /* a separator stays with the item before it, so a wrapped line starts with a link */
+  .site-links li { white-space: nowrap; }
+  .site-links li + li::before { content: none; }
+  .site-links li:not(:last-child)::after { content: " ·"; padding-inline-end: 0.6ch; }
+  .site-links a { align-items: center; display: inline-flex; min-height: 44px; min-width: 44px; }
+
+  /* the breadcrumb leaves out the page's own title, which is the h1 right under it;
+     the status line follows the h1 */
+  .breadcrumb .here { display: none; }
+  .breadcrumb a { align-items: center; display: inline-flex; min-height: 44px; min-width: 44px; }
+  main > .breadcrumb,
+  main > h1 { order: -1; }
+  main > h1 + .status { margin-top: 0; }
+  body > footer a { align-items: center; display: inline-flex; min-height: 44px; min-width: 44px; }
+
+  /* prose: a tighter ragged right */
+  /* hyphens, and no text-wrap: pretty: it evens a paragraph's last lines by pulling words down,
+     which costs a full ch at the p90 of the ragged right (5.8ch without, 6.8ch with, /language/) */
+  p,
+  li,
+  dd,
+  figcaption { hyphens: auto; }
+  .bibliography ol { padding-inline-start: 2ch; }
+  .bibliography li { padding-inline-start: 0; }
+  code { overflow-wrap: anywhere; }
+  /* a heading set in code starts on E too: no chip */
+  :is(h1, h2, h3, h4) code { background: none; border: 0; padding: 0; }
+  :where(main) :where(ul, ol),
+  ol.bib,
+  ul.outcome-notes { padding-inline-start: 2ch; }
+
+  /* code: 13px, or what 44 columns of a 0.6em face fit at 375px (12.6px); wraps rather than scrolls as a last resort */
+  pre { font-size: min(13px, calc((100vw - 2 * var(--E)) / 44 / 0.61)); overflow-wrap: anywhere; white-space: pre-wrap; }
+  figure pre,
+  figure.ws pre.code,
+  figure .side-by-side pre.code { font-size: min(13px, calc((100vw - 2 * var(--E)) / 44 / 0.61)); }
+  pre.code:not(td pre) {
+    border-inline: 0;
+    margin-inline: calc(-1 * var(--E));
+    max-width: none;
+    padding-inline: var(--E);
+  }
+  pre.diagram { border: 0; padding-inline: 0; }
+  textarea.lisp-edit { font-size: min(13px, calc((100vw - 2 * var(--E)) / 44 / 0.61)); }
+
+  /* controls */
+  .ws .slider { margin: 0; min-height: 44px; }
+  main button,
+  main select,
+  main input:not([type="checkbox"]):not([type="range"]) { min-height: 44px; min-width: 44px; }
+  .tabs button,
+  .buttons button { min-height: 44px; min-width: 44px; }
+  summary { box-sizing: border-box; min-height: 44px; padding-block: 0.6rem; }
+  /* tables stack: one block per row, each cell under its column's name */
+  main table.stack:not(.ratgrid),
+  main table.stack:not(.ratgrid) tbody,
+  main table.stack:not(.ratgrid) tr,
+  main table.stack:not(.ratgrid) td { display: block; width: auto; }
+  main table.stack:not(.ratgrid) { min-width: 0; table-layout: auto; }
+  main table.stack:not(.ratgrid) thead { clip-path: inset(50%); height: 1px; overflow: hidden; position: absolute; white-space: nowrap; width: 1px; }
+  main table.stack:not(.ratgrid) tr { border-bottom: 1px solid var(--rule); padding-block: 0.4rem; }
+  main table.stack:not(.ratgrid) td { border: 0; padding: 0.1rem 0; }
+  main table.stack:not(.ratgrid) td[data-label]:not([data-label=""])::before { color: var(--mute); content: attr(data-label) ": "; }
+  main table.stack td code { white-space: normal; }
+  main td code { overflow-wrap: anywhere; white-space: normal; }
+  /* a table of three columns or fewer stays a table, and fits: equal columns, words break */
+  main table:not(.stack):not(.ratgrid) { table-layout: fixed; width: 100%; }
+  main table:not(.stack):not(.ratgrid) :is(th, td) { overflow-wrap: anywhere; white-space: normal; }
+  /* a link that is the whole cell is a target, not a link in running text */
+  main td > a:only-child { align-items: center; display: inline-flex; min-height: 44px; min-width: 44px; }
+  .table-wrap { overflow-x: visible; }
+
+  /* small marks keep their place in the line and take a 44px tap area around it */
+  label.sidenote-number,
+  label.margin-toggle,
+  label.margin-toggle:not(.sidenote-number),
+  sup a,
+  a.footnote-ref {
+    display: inline-block;
+    margin: -0.875rem -1rem;
+    max-height: none;
+    min-height: 44px;
+    min-width: 44px;
+    padding: 0.875rem 1rem;
+    text-align: center;
+  }
+}
