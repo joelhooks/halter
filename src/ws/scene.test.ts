@@ -123,7 +123,7 @@ await test("a told deadline is locked: Commit and move everyone is refused and n
     type(selector("label.why input"), twoDays),
     click(role("button", { name: "Commit and move everyone" })),
     Command.resolve(RunInterpreter, result),
-    expect(text("Nothing committed: refused: deadline-kept: 4 people were told close is 2027-11-30T07:59Z.", { exact: false })).toExist(),
+    expect(text("Nothing committed: refused: deadline-kept: 5 people were told close is 2027-11-30T07:59Z.", { exact: false })).toExist(),
     expect(text(`t=${AFTER_LAST_CALL}`)).toExist(),
     expect(selector("input.slider")).toHaveAttr("max", String(db.log.length)),
     expect(role("button", { name: "Commit for new entrants" })).not.toHaveAttr("aria-disabled", "true"),

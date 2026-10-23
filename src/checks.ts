@@ -154,7 +154,8 @@ export const DOCTRINE = [
   :at (?s :send/vary-hard)
   :where ((?s :send/path ?c) (?s :send/key ?k) (?s :send/vary-by ?d) (?s :send/vary-hard true)
           (?d :dim/name ?dn)
-          (count ?n ?p (?a :act/of ?dn) (?a :act/kind answered) (?a :act/source inferred) (?a :act/person ?p) (?a :act/at ?t)
+          (count ?n ?p (?v :variant/send ?s) (?v :variant/value ?val)
+                 (?a :act/of ?dn) (?a :act/kind answered) (?a :act/value ?val) (?a :act/source inferred) (?a :act/person ?p) (?a :act/at ?t)
                  (not (?b :act/person ?p) (?b :act/kind answered) (?b :act/of ?dn) (?b :act/at ?u) (> ?u ?t)))
           (> ?n 0)))`,
   `(check "synthetic-live" :severity refuse :cites (bc-gates)
@@ -208,6 +209,11 @@ export const DOCTRINE = [
           (?ve :version/path ?c) (?ve :version/tx ?vt) (!= ?vt ?cur)
           (count ?n ?p (?p :path/version ?ve) (?p :path/at ?s) (starts? ?s ?c))
           (> ?n 0)))`,
+  `(check "refused-at-run" :severity alarm :cites (bc-gates)
+  :say "{?n} people in {?c} hit {?ck} mid-run. Their {?k} fell back to its else, or was skipped. Fix the cause."
+  :at ?c
+  :where ((?r :refusal/send ?m) (starts? ?m ?c) (?r :refusal/check ?ck) (?r :refusal/key ?k)
+          (count ?n ?p (?x :refusal/send ?m) (?x :refusal/check ?ck) (?x :refusal/person ?p))))`,
   `(check "uncertain-sends" :severity alarm :cites (pu)
   :say "{?n} people have sends in {?c} the provider never confirmed. Check the provider before anything retries."
   :at ?c
@@ -255,6 +261,10 @@ export interface Finding {
   readonly raisedBy?: ReadonlyArray<string>;
   // set when the finding is on an older version someone still runs; the line is in that version's printout
   readonly version?: number;
+  // a refusal that doesn't refuse (D40): "before", already there before this commit; "at-run", raised by
+  // the world after the commit that made this version, so halter stops only the sends it names; "old-version",
+  // on a version people still run, where the same holds for them
+  readonly standing?: "before" | "at-run" | "old-version";
 }
 export interface Verdict {
   readonly ok: boolean;
@@ -320,6 +330,25 @@ const versionFacts = (id: string, ctx: Context): Array<Triple> => {
     ...(cur === undefined ? [] : [{ e: id, a: "path/version-now", v: cur }]),
     ...[...held].flatMap((ve) => [{ e: ve, a: "version/path", v: id }, { e: ve, a: "version/tx", v: parseVersion(ve)?.v ?? 0 }]),
   ];
+};
+
+// A commit answers only for what it adds (D40). A finding is the same finding when its check and words are.
+export const findingKey = (f: Finding) => `${f.check}|${f.message}`;
+export const refusalKeys = (v: Verdict | undefined): ReadonlySet<string> => new Set((v?.findings ?? []).filter((f) => f.severity === "refuse").map(findingKey));
+// commit: refusals already in the baseline (the head) don't refuse this draft, nor do old versions' refusals,
+// so a fix for new entrants reads clean while the people on the old version hit them at run.
+// page: refusals on an old version, or not there when this version was committed, don't refuse the page;
+// they're true at run, where halter fails closed for only the people they name.
+export const judge = (v: Verdict, baseline: ReadonlySet<string>, mode: "commit" | "page"): Verdict => {
+  const findings = v.findings.map((f): Finding => {
+    if (f.severity !== "refuse") return f;
+    const known = baseline.has(findingKey(f));
+    // a version people still run is one this commit doesn't change: true at run for them, on either side
+    const standing = f.version !== undefined ? "old-version" : mode === "commit" ? (known ? "before" : undefined) : known ? undefined : "at-run";
+    return standing === undefined ? f : { ...f, standing };
+  });
+  const refusals = findings.filter((f) => f.severity === "refuse" && f.standing === undefined).length;
+  return { ...v, findings, refusals, ok: refusals === 0 };
 };
 
 export const verdict = (source: string, ctx: Context, older = true): Verdict => {

@@ -262,7 +262,8 @@ const bf: Path = {
       sends: [
         send("bf-01", { on: "2027-11-24T17:00Z" }, "announce-pitch"),
         send("bf-02", { on: "2027-11-26T17:00Z" }, "fix", {
-          vary: { dim: "role", hard: false, cases: [{ value: "podcaster", message: "bf-02-podcaster" }, { value: "writer", message: "bf-02-writer" }], else: "bf-02" },
+          // :hard: the variants state the reader's role as a fact ("As a writer, you…")
+          vary: { dim: "role", hard: true, cases: [{ value: "podcaster", message: "bf-02-podcaster" }, { value: "writer", message: "bf-02-writer" }], else: "bf-02" },
         }),
         send("bf-03", { on: "2027-11-27T17:00Z" }, "proof"),
         send("bf-04", { on: "2027-11-29T17:00Z" }, "urgency", { deadline: "close" }),
@@ -306,7 +307,7 @@ const ASKED: ReadonlyArray<readonly [string, string]> = [
 ];
 const INFERRED: ReadonlyArray<readonly [string, string]> = [
   ["fay", "developer"],
-  ["gus", "podcaster"],
+  ["gus", "teacher"],
 ];
 // Signing up makes a site account and tags the person; the course path does the rest.
 const signup = (...who: Array<string>) => who.flatMap((p) => [add(`person/${p}`, "person/tags", "signup:five-day-tools"), add(`person/${p}`, "person/account", true)]);
@@ -473,6 +474,25 @@ export const AUTHORED: ReadonlyArray<TxInput> = [
   tx("adapter:shop", GUS_FIRST_AT, "observed", 'Shop: "order 2142, Small Tools, Shipped"', gusFirst),
   tx("adapter:shop", "2027-09-24T11:00Z", "observed", 'Shop: "order 2142 refunded"', refund),
   tx("adapter:shop", "2027-12-05T12:00Z", "observed", 'Shop: "order 2290, Small Tools, Shipped"', bought("gus", "small-tools")),
+  // D40: two made-up people join the list mid-run, with no commit behind them. Jo's role is a desk guess from
+  // a click, so bf-02's :hard writer variant is refused at run for her and she gets the else. Quin is a QA
+  // fixture imported onto the real list by mistake: synthetic, so no variant is safe and bf-06 skips.
+  tx("adapter:site", "2027-11-25T09:00Z", "observed", 'Site: "joined Fernhill News"', [
+    add("person/jo", "person/name", "Jo Penn"),
+    add("person/jo", "person/email", "jo@example.org"),
+    add("person/jo", "person/lists", "list/fernhill-news"),
+  ]),
+  tx("agent:desk", "2027-11-25T09:30Z", "inferred", 'Mara: "Guess a role for new list members from what they click."', answered("jo", "role", "writer"), "role-from-click"),
+  tx("adapter:qa", "2027-11-30T04:00Z", "observed", 'QA import: "fixture Quin Test"', [
+    add("person/quin", "person/name", "Quin Test"),
+    add("person/quin", "person/email", "quin@example.org"),
+    add("person/quin", "person/lists", "list/fernhill-news"),
+    add("person/quin", "person/synthetic", true),
+  ]),
+  tx("teo", "2027-11-30T10:00Z", "assumed", 'Teo: "Quin is a QA fixture. Fixtures live on the test list."', [
+    { e: "person/quin", a: "person/lists", v: "list/fernhill-news", added: false },
+    add("person/quin", "person/lists", "list/fernhill-test"),
+  ]),
   // D33: one delivery the provider never confirmed. Ana's day-5 email went out five hours before Teo
   // held the bridge for the outage. The provider's receipt never came, so the adapter marks it uncertain,
   // and nothing retries it: a second email can't be unsent.
@@ -484,7 +504,7 @@ export const AUTHORED: ReadonlyArray<TxInput> = [
 ];
 
 // Late enough that every target window in the seed has closed.
-export const HORIZON = "2028-02-01T00:00Z";
+export const HORIZON = "2028-03-15T00:00Z";
 export const PATHS = ["fieldkit-c7", "bf-2027", "five-day-tools", "small-tools-bridge", "small-tools-start", "spring-note", "why-didnt-you-buy"] as const;
 export const CAMPAIGNS = PATHS;
 let cached: Db | undefined;

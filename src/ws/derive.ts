@@ -2,7 +2,7 @@
 // Pure and memoized by the Db, so a keystroke doesn't replay the log.
 import { Option } from "effect";
 import { asOf, diff, facts, history, type Db, type Op } from "../db.ts";
-import { verdict, type Verdict } from "../checks.ts";
+import { judge, refusalKeys, verdict, type Verdict } from "../checks.ts";
 import { readPath } from "../extract.ts";
 import { owned, type Path } from "../model.ts";
 import { viewAt, type View } from "../views.ts";
@@ -50,7 +50,8 @@ export const draftOf = (model: Model): Draft => {
   const here = hereOf(model);
   const fs = facts(here);
   const ex = readPath(text);
-  const v = verdict(text, { facts: fs, history: history(here) });
+  // a commit answers only for the refusals it adds (D40): the head's own findings don't refuse it
+  const v = judge(verdict(text, { facts: fs, history: history(here) }), refusalKeys(viewOf(model).verdict), "commit");
   const d: Draft =
     ex.id !== "" && ex.id !== model.pathId
       ? { text, path: undefined, ops: [], error: `this draft names "${ex.id}"; the path on this page is "${model.pathId}"`, verdict: v }

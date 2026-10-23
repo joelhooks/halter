@@ -30,7 +30,7 @@ export const BREAK: Record<string, ReadonlyArray<readonly [string, string]>> = {
     ['(early-bird :until "2027-03-08T23:00Z")', '(early-bird :until "2027-03-20T23:00Z")'],
   ],
   "bf-2027": [
-    ["(vary role\n", "(vary role :hard\n"],
+    ['(writer "bf-02-writer")', '(knitter "bf-02-knitter")'],
     ['\n        (else "bf-02")', ""],
   ],
   "spring-note": [['(enters-on (on-list? "fernhill-news")', '(enters-on (not (bought? "library"))']],
@@ -130,6 +130,11 @@ const commit = (model: Model, kind: CommitKind): UpdateReturn => {
   }
   if (d.ops.length === 0 && kind !== "move") {
     return nothing(model, "Nothing committed: nothing is staged.");
+  }
+  // a commit is refused by the refusals it adds, and only those (D40)
+  const adds = d.verdict.findings.filter((f) => f.severity === "refuse" && f.standing === undefined);
+  if (adds.length > 0) {
+    return nothing(model, `Nothing committed: refused: ${adds.map((f) => `${f.check}: ${f.message}`).join("; ")}`);
   }
   const input = { who: model.who, why: model.why, source: model.source, ...(model.source === "inferred" ? { rule: "editor" } : {}), ops: d.ops, ...(kind === "move" ? { moves: [{ path: model.pathId }] } : {}) };
   return write(model, input, kind === "move" ? Said.MoveEveryone() : kind === "new" ? Said.ForNewEntrants() : Said.Plain());

@@ -1,6 +1,6 @@
 // Pure HTML views over the db, for the pages and for the workspace program's read-only panels.
 import { asOf, ATTRS, dateMs, facts, history, transact, type Db, type Transacted, type Tx } from "./db.ts";
-import { quotes, verdict, type Finding, type Verdict } from "./checks.ts";
+import { judge, quotes, refusalKeys, verdict, type Finding, type Verdict } from "./checks.ts";
 import { esc, highlight, numbered } from "./hl.ts";
 import { allSends, band, fromFacts, type Path } from "./model.ts";
 import { duration, printPath } from "./printer.ts";
@@ -35,6 +35,21 @@ export interface View {
 export const messageIds = (p: Path): Array<string> => [
   ...new Set(allSends(p).flatMap((s) => [s.key, ...(s.vary?.cases.map((c) => c.message) ?? []), ...(s.vary?.else === undefined ? [] : [s.vary.else])])),
 ];
+// What the commit that made a version was judged on: the path's refusals as of that transaction (D40).
+const atCommit = new WeakMap<Db, Map<string, ReadonlySet<string>>>();
+const commitBaseline = (db: Db, id: string, d: Db): ReadonlySet<string> => {
+  const ver = currentVersion(history(d), id);
+  if (ver === undefined) return new Set();
+  const m = atCommit.get(db) ?? new Map<string, ReadonlySet<string>>();
+  atCommit.set(db, m);
+  const hit = m.get(`${id}@${ver}`);
+  if (hit) return hit;
+  const d0 = asOf(db, ver);
+  const p0 = fromFacts(id, facts(d0));
+  const keys = p0 ? refusalKeys(verdict(printPath(p0), { facts: facts(d0), history: history(d0) })) : new Set<string>();
+  m.set(`${id}@${ver}`, keys);
+  return keys;
+};
 export const viewAt = (db: Db, id: string, t: number): View => {
   const d = asOf(db, t);
   const f = facts(d);
@@ -50,7 +65,9 @@ export const viewAt = (db: Db, id: string, t: number): View => {
     : `; ${id} has no facts yet at t=${t}.\n; Drag the slider to the right.\n`;
   // a pending note that doesn't fit beside its waiver prints on its own line above it, so the findings'
   // line numbers are read again from the text as shown
-  const v = path && pending.size > 0 ? verdict(text, { facts: f, history: history(d) }) : first;
+  const raw = path && pending.size > 0 ? verdict(text, { facts: f, history: history(d) }) : first;
+  // a refusal the world raised after this version was committed doesn't refuse the page: it's true at run
+  const v = raw ? judge(raw, commitBaseline(db, id, d), "page") : undefined;
   const ids = path ? messageIds(path) : [];
   const have = messagesFrom(f).filter((m) => ids.includes(m.id));
   const missing = ids.filter((i) => !have.some((m) => m.id === i));
@@ -66,7 +83,9 @@ export const marksOf = (v: Verdict | undefined) => {
     if (f.waived !== undefined && f.waived !== "staged" && f.waived.counts) continue;
     // a finding on an older version points at that version's printout, not this one
     if (f.version !== undefined) continue;
-    if (m.get(f.line) !== "refuse") m.set(f.line, f.severity);
+    // a refusal that doesn't refuse (true at run, or already there) marks its line as an alarm does
+    const sev = f.severity === "refuse" && f.standing !== undefined ? "alarm" : f.severity;
+    if (m.get(f.line) !== "refuse") m.set(f.line, sev);
   }
   return m;
 };
@@ -298,6 +317,13 @@ export const feedData = (db: Db, id: string, who = "mara"): Feed => {
     for (const h of tx.datoms.filter((x) => x.e === id && x.a === "path/hold-until")) what.push(h.added ? `hold until ${String(h.v)}` : "hold dropped");
     const struct = tx.datoms.filter((x) => (x.e === id || String(x.e).startsWith(`${id}/`)) && x.a !== "path/waives" && x.a !== "path/hold-until" && !x.a.startsWith("tx/"));
     if (struct.length && !what.some((x) => x.startsWith("move"))) what.push(`structure, ${struct.length} ${struct.length === 1 ? "datom" : "datoms"}`);
+    // a refusal at run: who it stopped, which send, and what went out instead (D40)
+    for (const r of tx.datoms.filter((x) => x.a === "refusal/send" && x.added && String(x.v).startsWith(`${id}/`))) {
+      const get = (a: string) => tx.datoms.find((x) => x.e === r.e && x.a === a)?.v;
+      const person = String(get("refusal/person") ?? "");
+      const first = String(facts(at).find((f) => f.e === person && f.a === "person/name")?.v ?? person).split(" ")[0];
+      what.push(`refused at run: ${String(get("refusal/check"))}, ${first}'s ${String(get("refusal/key"))} ${kwName(get("refusal/outcome")) === "else" ? "got its else" : "was skipped"}`);
+    }
     const msgs = [...new Set(tx.datoms.filter((x) => String(x.e).startsWith("message/")).map((x) => String(x.e).split("/")[1]))];
     if (msgs.length) what.push(`content: ${msgs.join(", ")}`);
     // a move's alarms are judged after the interpreter's rebase, not in the one transaction before it

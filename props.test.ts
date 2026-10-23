@@ -453,7 +453,7 @@ prop("no counting waiver's author wrote a fact its check's current findings poin
       steps.forEach((x, i) => {
         const agent = x.who.startsWith("agent:");
         const why = agent ? "probe-rule: a random step" : `${x.who}: "A random step."`;
-        const base = { who: x.who, at: `2028-02-02T${String(10 + i).padStart(2, "0")}:00Z`, why, source: agent ? ("inferred" as const) : ("assumed" as const), ...(agent ? { rule: "probe-rule" } : {}) };
+        const base = { who: x.who, at: `2028-03-16T${String(10 + i).padStart(2, "0")}:00Z`, why, source: agent ? ("inferred" as const) : ("assumed" as const), ...(agent ? { rule: "probe-rule" } : {}) };
         let ops: Array<Op>;
         if (x.waive) ops = [{ e: x.path, a: "path/waives", v: x.check, added: true }];
         else {
@@ -480,13 +480,13 @@ prop("no counting waiver's author wrote a fact its check's current findings poin
   );
 });
 
-prop("the feed for cursor c is exactly the agent transactions on the path with tx > c", () => {
+prop("the feed for cursor c is exactly the agent transactions on the path, and the refusals at run on it, with tx > c", () => {
   const db0 = seedDb();
   const n = db0.log.length;
   fc.assert(
     fc.property(fc.constantFrom(...PATHS), fc.integer({ min: 0, max: n }), fc.constantFrom("mara", "teo"), (path, c, who) => {
       const old = facts(db0).filter((f) => f.e === who && f.a === "seen/path" && String(f.v).startsWith(`${path}@`));
-      const r = transact(db0, { who, at: "2028-02-02T09:00Z", source: "assumed", why: "marked seen", ops: [...old.map((f) => ({ e: who, a: f.a, v: f.v, added: false })), { e: who, a: "seen/path", v: `${path}@${c}`, added: true }] });
+      const r = transact(db0, { who, at: "2028-03-16T09:00Z", source: "assumed", why: "marked seen", ops: [...old.map((f) => ({ e: who, a: f.a, v: f.v, added: false })), { e: who, a: "seen/path", v: `${path}@${c}`, added: true }] });
       ok(r.ok);
       if (!r.ok) return;
       // the oracle, written out: an agent other than the interpreter, after c, writing on the path's own
@@ -494,10 +494,12 @@ prop("the feed for cursor c is exactly the agent transactions on the path with t
       const p = fromFacts(path, facts(r.db));
       const msgs = new Set(p ? p.states.flatMap((st) => st.sends.flatMap((sd) => [sd.key, ...(sd.vary?.cases.map((x) => x.message) ?? []), ...(sd.vary?.else ? [sd.vary.else] : [])])) : []);
       const want = r.db.log
-        .filter((tx) => tx.t > c && tx.who.startsWith("agent:") && tx.who !== "agent:halter")
+        .filter((tx) => tx.t > c && tx.who.startsWith("agent:"))
         .filter((tx) =>
           tx.datoms.some((d) => {
             const e = String(d.e);
+            // the interpreter's transactions count only for a send it stopped on this path (D40)
+            if (tx.who === "agent:halter") return d.a === "refusal/send" && String(d.v).startsWith(`${path}/`);
             return e === path || e.startsWith(`${path}/`) || (d.a === "tx/move" && String(d.v).startsWith(`(move "${path}"`)) || (e.startsWith("message/") && msgs.has(e.split("/")[1] ?? ""));
           }),
         )
@@ -724,6 +726,73 @@ prop("enters-on never enters someone whose only matching acts happened before go
       deepStrictEqual(entered, [], `${sinceAt ?? "go-live"}: ${inputs.map((x) => `${x.at} ${x.why}`).join(" | ")}`);
     }),
     { numRuns: Number(process.env.RUNS ?? 8) },
+  );
+});
+
+prop("a refusal at run stops only the refused send for the person it names: nobody gets a :hard variant from a guess, nothing reaches a synthetic person, and everyone else's sends are as written", () => {
+  const base = seedDb();
+  const sentAs = (d: Db, who: (p: string) => boolean) =>
+    deliveriesOf(facts(d)).filter((x) => x.send.startsWith("bf-2027/") && who(x.person)).map((x) => `${x.person} ${x.send} ${x.message}`).sort();
+  const SEEDED = new Set(["ana", "ben", "cy", "dee", "eli", "fay", "gus", "hal", "jo", "quin"].map((x) => `person/${x}`));
+  const want = sentAs(base, (p) => SEEDED.has(p));
+  const bf = fromFacts("bf-2027", facts(base));
+  const hard = new Set(bf?.states.flatMap((st) => st.sends).flatMap((sd) => (sd.vary?.hard ? sd.vary.cases.map((c) => c.message) : [])) ?? []);
+  ok(hard.size > 0, "bf-2027 has a :hard vary");
+  const answer = fc.record({ value: fc.constantFrom("podcaster", "writer", "developer"), source: fc.constantFrom("asked", "inferred"), day: fc.integer({ min: 0, max: 11 }) });
+  const newcomer = fc.record({ synthetic: fc.boolean(), answers: fc.array(answer, { maxLength: 2 }) });
+  fc.assert(
+    fc.property(fc.array(newcomer, { minLength: 1, maxLength: 3 }), (people) => {
+      const inputs: Array<TxInput> = [];
+      people.forEach((x, i) => {
+        const e = `person/new${i}`;
+        inputs.push({
+          who: "adapter:site", at: "2027-11-20T09:00Z", source: "observed", why: 'Site: "joined Fernhill News"',
+          ops: [
+            { e, a: "person/name", v: `New${i} Vale`, added: true },
+            { e, a: "person/email", v: `new${i}@example.org`, added: true },
+            { e, a: "person/lists", v: "list/fernhill-news", added: true },
+            ...(x.synthetic ? [{ e, a: "person/synthetic", v: true, added: true }] : []),
+          ],
+        });
+        x.answers.forEach((y, j) => {
+          const at = `${new Date(Date.UTC(2027, 10, 20 + y.day, 10, 10 * j + i)).toISOString().slice(0, 16)}Z`;
+          const act = `act/new${i}-${j}`;
+          inputs.push({
+            who: y.source === "asked" ? "adapter:site" : "agent:desk", at, source: y.source === "asked" ? "asked" : "inferred",
+            why: y.source === "asked" ? 'Survey: "what do you make?" answered' : 'Mara: "Guess a role from clicks."', ...(y.source === "inferred" ? { rule: "role-from-click" } : {}),
+            ops: [
+              { e: act, a: "act/person", v: e, added: true },
+              { e: act, a: "act/kind", v: Kw.of("answered"), added: true },
+              { e: act, a: "act/of", v: "role", added: true },
+              { e: act, a: "act/value", v: Kw.of(y.value), added: true },
+            ],
+          });
+        });
+      });
+      const d = interpret([...AUTHORED, ...inputs], HORIZON);
+      const fs = facts(d);
+      // everyone already in the seed gets exactly what they got without the newcomers
+      deepStrictEqual(sentAs(d, (p) => SEEDED.has(p)), want);
+      for (const [i, x] of people.entries()) {
+        const e = `person/new${i}`;
+        const ds = deliveriesOf(fs).filter((y) => y.person === e && y.send.startsWith("bf-2027/"));
+        if (x.synthetic) deepStrictEqual(ds, [], `${e} is synthetic`);
+        for (const y of ds) {
+          if (!hard.has(y.message)) continue;
+          // the oracle: their latest role answer as of the transaction that sent it, by act/at
+          const t = d.log.find((tx) => tx.datoms.some((z) => z.e === e && z.a === "send/sent" && z.v === y.send && z.added))?.t ?? 0;
+          const at = facts(asOf(d, t));
+          const acts = at.filter((z) => z.a === "act/person" && z.v === e).map((z) => String(z.e)).filter((a) => at.some((z) => z.e === a && z.a === "act/of" && z.v === "role"));
+          const get = (a: string, k: string) => at.find((z) => z.e === a && z.a === k)?.v;
+          const latest = acts.sort((a, b) => String(get(a, "act/at")).localeCompare(String(get(b, "act/at")))).at(-1);
+          ok(latest !== undefined && String(get(latest, "act/source")) !== "inferred", `${e} got ${y.message} from a guess`);
+        }
+        // a send stopped for them left a refusal saying how
+        const skipped = fs.filter((z) => z.e === e && z.a === "send/skipped" && String(z.v).startsWith("bf-2027/")).map((z) => String(z.v));
+        for (const k of skipped) if (x.synthetic) ok(fs.some((z) => z.a === "refusal/send" && z.v === k && fs.some((w) => w.e === z.e && w.a === "refusal/person" && w.v === e)), `${e} ${k}`);
+      }
+    }),
+    { numRuns: Number(process.env.RUNS ?? 6) },
   );
 });
 

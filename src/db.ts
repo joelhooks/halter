@@ -146,6 +146,12 @@ export const SCHEMA: ReadonlyArray<Attr> = [
   a("act/at", "date", "when it happened; freshness reads this, never the transaction"),
   a("act/source", "keyword", "how we know, from the transaction that first wrote the act; a correction doesn't change it"),
   a("act/value", "keyword", "an answered act's value; a person's value for the dimension follows their latest answered act"),
+  // A refusal at run (D40): the interpreter stopped one send for one person, and how.
+  a("refusal/person", "ref", "the person the refusal named"),
+  a("refusal/send", "string", "the send it stopped, as PATH/KEY"),
+  a("refusal/key", "string", "the send's key"),
+  a("refusal/check", "string", "the refusal that was true for this person and this send"),
+  a("refusal/outcome", "keyword", "else when the vary's safe else went out instead, skipped when nothing went"),
   a("log/cursor", "number", "the interpreter has handled every transaction up to this one"),
   a("person/synthetic", "boolean", "a fake person who only runs in simulations"),
   a("person/phone", "string", "a fictional 555-01xx number; sms also needs consent"),

@@ -6,7 +6,7 @@ import { AUTHORED, seedDb } from "../seed.ts";
 import { Message } from "./message.ts";
 import { CommitState, initModel, type Model } from "./model.ts";
 import { BREAK, RunInterpreter, ScrollToHere, update } from "./update.ts";
-import { draftText } from "./derive.ts";
+import { draftOf, draftText } from "./derive.ts";
 
 const db = seedDb();
 
@@ -49,13 +49,49 @@ test("the editor follows the slider until there's a draft, and Reset hands it ba
     }),
     message(Message.ClickedBreak()),
     model((m) => {
-      ok(Option.isSome(m.maybeDraft) && m.maybeDraft.value.includes("(vary role :hard\n"));
+      ok(Option.isSome(m.maybeDraft) && m.maybeDraft.value.includes('(knitter "bf-02-knitter")'));
       deepStrictEqual(m.notice, "Broken on purpose. Read the checks, then Reset.");
     }),
     message(Message.MovedSlider({ t: 90 })),
     model((m) => ok(Option.isSome(m.maybeDraft), "a draft stays put when the slider moves")),
     message(Message.ClickedReset()),
     model((m) => ok(Option.isNone(m.maybeDraft))),
+  );
+});
+
+// D40: a commit answers only for what it adds. At the head, hard-from-inferred is true on Black Friday
+// (Jo's guessed role), and an edit that doesn't add a refusal still commits.
+const headDraft = draftText(at("bf-2027", HEAD));
+test("a commit isn't refused by a refusal that was there before it", () => {
+  story(
+    update,
+    given(at("bf-2027", HEAD, { tab: "Edit" })),
+    message(Message.UpdatedDraft({ text: headDraft.replace(':title "Black Friday 2027"', ':title "Black Friday, 2027"') })),
+    message(Message.UpdatedWhy({ value: 'Mara: "Put a comma in the title."' })),
+    model((m) => {
+      const v = draftOf(m).verdict;
+      ok(v.ok, JSON.stringify(v.findings.filter((f) => f.severity === "refuse")));
+      deepStrictEqual(v.findings.filter((f) => f.standing === "before").map((f) => f.check), ["hard-from-inferred"]);
+    }),
+    message(Message.ClickedCommit({ kind: "plain" })),
+    model((m) => ok(CommitState.isAnyOf(["Running"])(m.commit), m.notice)),
+    Command.expectHas(RunInterpreter),
+    Command.resolve(RunInterpreter, Message.FailedRunInterpreter({ reason: "not run in a story" })),
+  );
+});
+test("a commit that adds a refusal is refused, and names only that one", () => {
+  story(
+    update,
+    given(at("bf-2027", HEAD, { tab: "Edit" })),
+    message(Message.UpdatedDraft({ text: headDraft.replace('\n        (else "bf-02")', "") })),
+    message(Message.UpdatedWhy({ value: 'Mara: "Drop the else."' })),
+    message(Message.ClickedCommit({ kind: "plain" })),
+    Command.expectNone(),
+    model((m) => {
+      ok(m.notice.startsWith("Nothing committed: refused: else-on-every-vary:"), m.notice);
+      ok(!m.notice.includes("hard-from-inferred"), m.notice);
+      deepStrictEqual(m.db, db);
+    }),
   );
 });
 

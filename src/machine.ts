@@ -5,7 +5,7 @@ import { duration, printAction, printPred, printVia } from "./printer.ts";
 
 export const REGISTRY = {
   actors: [
-    ["deliver", "Effect createEffectLogic: the one decision (hard stops, holds, guard, pace), then picks channels from :via and hands the message to deliver/<channel>. Its result is a path event."],
+    ["deliver", "Effect createEffectLogic: the one decision (hard stops, including a refusal true for this person and send, which sends the vary's safe else or skips; holds, guard, pace), then picks channels from :via and hands the message to deliver/<channel>. Its result is a path event."],
     ["deliver/email", "sends an email rendition through the email provider's adapter."],
     ["deliver/sms", "sends an sms rendition through the sms provider's adapter. Only reached with consent."],
     ["deliver/site", "grants access to a page or lesson, recorded as a fact. Needs a route and a store: Alchemy resources."],

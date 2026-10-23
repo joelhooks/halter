@@ -494,7 +494,7 @@ const useCases = (): ReadonlyArray<UseCase> => {
     },
     {
       goal: "Write to each kind of reader",
-      say: "`vary` picks a message by a person's value on a dimension, and `else` covers everyone without one. Marking a vary `:hard` states the value as who they are, and halter refuses that while any of those values were inferred rather than asked.",
+      say: "`vary` picks a message by a person's value on a dimension, and `else` covers everyone without one. Marking a vary `:hard` states the value as who they are. halter refuses a commit that does that while a value it states was inferred rather than asked, and a guess that arrives mid-run gets that person the `else`.",
       excerpts: [pickForms("bf-2027", [[/\(send "bf-02"/, Infinity]], "bf-2027 vary")],
       checks: ["hard-from-inferred", "else-on-every-vary", "value-declared", "few-values"],
       live: ["/paths/bf-2027/", "Black Friday 2027"],
@@ -674,9 +674,8 @@ These aren't part of 0.2. They came up while making the seed run, and they're fo
 - **The last assert decides who waived.** If whoever raised an alarm asserts a waiver someone else already confirmed, the waiver becomes theirs and goes pending, so the alarm comes back on. That errs toward the alarm. Undoing a confirmation in the sketch's editor retracts the waiver, rather than returning it to pending.
 - **An alarm on the whole path has no author.** \`no-self-waiver\` reads who wrote the facts a finding's \`:at\` points at. \`post-close-survey\` points at the path itself, which names no single fact, so the sketch lets anyone waive it, as it does \`uncertain-sends\` and \`people-on-old-version\`. Whether the path's author raised an alarm about something missing is open.
 - **A quote can't prove whose words it is.** A valid why holds words in quotes, or is \`:source inferred\` with a \`:rule\`. The sketch checks that the quote is there, not that the author said it.
-- **Targets outlast the walk, so the log does too.** The longest window is \`:within 2400h\`, so the seed runs to 1 February 2028 for every window to close. A live system never closes the log; it just keeps watching.
+- **Targets outlast the walk, so the log does too.** The longest window is \`:within 2400h\`, and the last people enter Black Friday at the end of November, so the seed runs to 15 March 2028 for every window to close. A live system never closes the log; it just keeps watching.
 - **Deferred sends pile up.** Ben left the bridge on 26 November and got two deferred Black Friday sends in the same minute. The no-pile-ups rule covers holds; it should cover defers too.
-- **Old versions count toward the verdict.** Checks run on every version someone is still on, and a refusal on an old version counts as a refusal. That fails closed, but it means fixing a path for new entrants still shows Refused until the people on the old version are moved.
 - **The editor forks the log.** The editor edits as of the slider. Committing sets aside the seed transactions after that point and runs the interpreter on from the edit, so its path events follow.
 - **Shape checks and cites.** The pack gives \`else-on-every-vary\` a source,[dunn-survey] but shape checks carry no cite. The sketch keeps it.`,
   },
@@ -732,7 +731,13 @@ These aren't part of 0.2. They came up while making the seed run, and they're fo
 {{fig:deadline-attempt}}
 
 - **Try it.** Drag the slider past the last call, open the Edit tab, change \`:closes\` and press **Commit and move everyone**: it's refused and nothing changes. **Commit for new entrants** still works, because nobody already told runs the new version.
-- Send \`bf-02\` varies by role, softly. Each message it can pick, \`bf-02-podcaster\`, \`bf-02-writer\` and the \`else\`, is declared in the content file with an email rendition, or \`via-has-rendition\` refuses. Turning on \`:hard\` is refused, because two people's roles were inferred, not asked. [dunn-rm]
+- Send \`bf-02\` varies by role, \`:hard\`: the podcaster and writer emails tell the reader what they do. Each message it can pick, \`bf-02-podcaster\`, \`bf-02-writer\` and the \`else\`, is declared in the content file with an email rendition, or \`via-has-rendition\` refuses. When the drafter committed it, every role on those two variants had been asked. The desk guessed Fay's and Gus's, but as developer and teacher, which no variant states. [dunn-rm]
+- **Two people were refused at run.** Nobody committed anything; the world changed under a live path.
+  - Jo joined the list on 25 November, and half an hour later \`agent:desk\` guessed she's a writer from what she clicked, by \`:rule "role-from-click"\`. That made \`hard-from-inferred\` true for her and \`bf-02\`. On the 26th halter sent her the \`else\`, the plain \`bf-02\`, because telling her she's a writer from a guess is the harm. Her later sends went out as written.
+  - Quin is a QA fixture, \`:person/synthetic\`, imported onto the real list on 30 November by mistake. \`synthetic-live\` is true for her and every send, and an \`else\` doesn't help, so her \`bf-06\` was skipped: "refused at run: synthetic-live, Quin is synthetic". Teo moved her to the test list that morning, but she'd already entered. Every send she had was skipped, so she passed.
+  - Everyone else's \`bf-02\` went out as written: Ana, whose role was asked, got the podcaster email.
+  - Each one raised \`refused-at-run\`, which anyone can waive because the world raised it. Both show in Mara's **Since you last looked** feed, and on the page as alarms. The page's verdict still reads Ships: \`hard-from-inferred\` wasn't true when the drafter committed this version, so it acts at run, for Jo only. [bc-gates]
+- **Try it.** At the head, open the Edit tab, change the title, and type your own words, in quotes, in the why box. **Commit** works, though \`hard-from-inferred\` is true for Jo: a commit answers only for the refusals it adds. Press **Break it** instead and the commit is refused by the three it adds.
 
 ## The target
 

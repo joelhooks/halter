@@ -6,7 +6,7 @@
 // Structure is fixed at entry (D32): each run reads the path as of its version, and only a move changes
 // that under people. Holds are the exception: a run checks holds on the current path, whatever its version.
 // The real runtime is XState v6 actors on Effect's Clock; this loop only makes the seed's events.
-import { asOf, basis, dateMs, empty, facts, history, Kw, moveText, msDate, transact, type Db, type Move, type Op, type Tx, type TxInput } from "./db.ts";
+import { asOf, basis, dateMs, empty, facts, history, Kw, kw, moveText, msDate, transact, type Db, type Move, type Op, type Tx, type TxInput } from "./db.ts";
 import { isStructure, versionId } from "./version.ts";
 import { MESSAGE, renditionId } from "./content.ts";
 import { deliveryOps } from "./delivery.ts";
@@ -16,6 +16,35 @@ import { answer, holds, latestAnswer, people, type World } from "./pred.ts";
 import { printAction, printPred, printVia, duration } from "./printer.ts";
 
 export const HALTER = "agent:halter";
+
+// Refusals that read the world, not just structure (D40). A new entrant or a new act can make one true
+// mid-run with no commit behind it, so the decision asks before every send: is a refusal true for this
+// person and this message? Pure: the same answer the property checks against.
+export interface RunRefusal {
+  readonly check: "hard-from-inferred" | "synthetic-live";
+  readonly why: string;
+}
+const firstName = (w: World, person: string) => String(w.facts.find((f) => f.e === person && f.a === "person/name")?.v ?? person.replace(/^person\//, "")).split(" ")[0] ?? person;
+export const refusalAt = (s: Send, person: string, message: string, w: World): RunRefusal | undefined => {
+  if (w.facts.some((f) => f.e === person && f.a === "person/synthetic" && f.v === true)) return { check: "synthetic-live", why: `${firstName(w, person)} is synthetic` };
+  const v = s.vary;
+  // a :hard variant states who the person is; stating an inferred value is the harm, so the else is safe
+  if (v?.hard && message !== v.else && v.cases.some((c) => c.message === message)) {
+    const x = latestAnswer(w, person, v.dim);
+    if (x?.source === "inferred") return { check: "hard-from-inferred", why: `${firstName(w, person)}'s ${v.dim} is inferred` };
+  }
+  return undefined;
+};
+const refusalOps = (person: string, ref: string, key: string, r: RunRefusal, outcome: "else" | "skipped"): Array<Op> => {
+  const e = `refusal/${person.replace(/^person\//, "")}/${ref}/${r.check}`;
+  return [
+    { e, a: "refusal/person", v: person, added: true },
+    { e, a: "refusal/send", v: ref, added: true },
+    { e, a: "refusal/key", v: key, added: true },
+    { e, a: "refusal/check", v: r.check, added: true },
+    { e, a: "refusal/outcome", v: kw(outcome), added: true },
+  ];
+};
 
 interface Run {
   readonly person: string;
@@ -387,12 +416,23 @@ export const interpret = (authored: ReadonlyArray<TxInput>, horizon: string, opt
         if (!p || !runs.has(`${r.person}|${r.path}`)) continue;
         const ref = `${r.path}/${t.send.key}`;
         const closes = p.offer?.closes === undefined ? undefined : dateMs(p.offer.closes);
-        // One decision, in a fixed order: hard stops, holds, guards, pace, deliver.
+        // One decision, in a fixed order: hard stops (a refusal at run among them), holds, guards, pace, deliver.
         const ch = channels(t.send, r.person, w);
         if (ch.use.length === 0) {
           r.handled.add(t.send.key);
           r.lastAt = now;
           note(r.path, `${r.path}: ${t.send.key} skipped, no-channel: :via ${ch.via} reaches nobody here (${ch.passed.join("; ")})`, [add(r.person, "send/skipped", ref)]);
+          continue;
+        }
+        // Step 1, a refusal true for this person and this send (D40): fail closed on the harm only. The
+        // vary's else goes out when it's safe; otherwise only this send skips. Everyone else is untouched.
+        const wanted = messageFor(t.send, r.person, w);
+        const refused = refusalAt(t.send, r.person, wanted, w);
+        const fallback = refused && t.send.vary?.else !== undefined && !refusalAt(t.send, r.person, t.send.vary.else, w) ? t.send.vary.else : undefined;
+        if (refused && fallback === undefined) {
+          r.handled.add(t.send.key);
+          r.lastAt = now;
+          note(r.path, `${r.path}: ${t.send.key} skipped, refused at run: ${refused.check}, ${refused.why}`, [add(r.person, "send/skipped", ref), ...refusalOps(r.person, ref, t.send.key, refused, "skipped")]);
           continue;
         }
         const holdEnd = Math.max(...p.holds.map((h) => dateMs(h) ?? 0).filter((h) => h > now), -Infinity);
@@ -414,7 +454,7 @@ export const interpret = (authored: ReadonlyArray<TxInput>, horizon: string, opt
         } else {
           // Content is read at delivery: the site page is whatever the message says now, and each delivery
           // records the content version it read, so the log says exactly what this person got (D33).
-          const message = messageFor(t.send, r.person, w);
+          const message = fallback ?? wanted;
           const page = ch.use.includes("site") ? fact(w, renditionId(message, "site"), "rendition/page") : undefined;
           const how = `deliver succeeded via ${ch.use.join(" and ")}${ch.passed.length ? ` (${ch.passed.join("; ")})` : ""}`;
           const receipts = ch.use.flatMap((via) => {
@@ -428,7 +468,10 @@ export const interpret = (authored: ReadonlyArray<TxInput>, horizon: string, opt
             const at = eventInstant(runPath(r), t.send.deadline, r.state, r.stateAt);
             if (at !== undefined && !r.told?.has(t.send.deadline)) r.told = new Map([...(r.told ?? []), [t.send.deadline, at]]);
           }
-          note(r.path, `${r.path}: ${how}`, [add(r.person, "send/sent", ref), ...receipts, ...(typeof page === "string" ? [add(r.person, "person/access", page)] : [])]);
+          const sentOps = [add(r.person, "send/sent", ref), ...receipts, ...(typeof page === "string" ? [add(r.person, "person/access", page)] : [])];
+          if (refused && fallback !== undefined)
+            note(r.path, `${r.path}: ${t.send.key} refused at run: ${refused.check}, ${refused.why}; its else, ${fallback}, went out. ${how}`, [...sentOps, ...refusalOps(r.person, ref, t.send.key, refused, "else")]);
+          else note(r.path, `${r.path}: ${how}`, sentOps);
         }
       }
       if (flush()) react();

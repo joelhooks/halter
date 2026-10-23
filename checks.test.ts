@@ -2,24 +2,25 @@
 // Run: bun checks.test.ts
 import { deepStrictEqual, ok } from "node:assert";
 import { asOf, dateMs, diff, facts, history, kw, transact, type Db, type Move, type Op, type Triple, type TxInput } from "./src/db.ts";
-import { PACK, pendingText, verdict } from "./src/checks.ts";
-import { confirmWaiver } from "./src/views.ts";
+import { judge, PACK, pendingText, refusalKeys, verdict } from "./src/checks.ts";
+import { confirmWaiver, viewAt } from "./src/views.ts";
 import { renderHtml } from "./src/ws/static.ts";
 import { feedView } from "./src/ws/view.ts";
 import type { Db as FeedDb } from "./src/db.ts";
 const feedHtml = (d: FeedDb, id: string): string => renderHtml((h) => feedView(h, d, id));
 import type { Finding } from "./src/checks.ts";
 import { fromFacts, toFacts, type Path } from "./src/model.ts";
-import { interpret } from "./src/run.ts";
+import { interpret, refusalAt } from "./src/run.ts";
 import { holds } from "./src/pred.ts";
 import { parseVersion } from "./src/version.ts";
+import { kwName } from "./src/time.ts";
 import { deliveriesOf, deliveryOps, keyLookup } from "./src/delivery.ts";
 import { printPath } from "./src/printer.ts";
 import { readPath } from "./src/extract.ts";
 import { toldFacts } from "./src/deadline.ts";
 import { fitSource } from "./src/fit.ts";
 import { readFileSync } from "node:fs";
-import { cursorOf, feedOf, markSeenOps, messagesOf, touchesFeed } from "./src/feed.ts";
+import { cursorOf, feedOf, markSeenOps, messagesOf, refusedOn, touchesFeed } from "./src/feed.ts";
 import { parseQuery, run } from "./src/query.ts";
 import { AUTHORED, closeShift, HORIZON, PATHS, seedDb } from "./src/seed.ts";
 
@@ -57,7 +58,28 @@ const PLANTED: Record<string, { readonly src: string; readonly extra?: ReadonlyA
   "wait-has-timeout": { src: swap(W, '      :via email))', '      :via email)\n    (to closed :when (bought? "small-tools")))') },
   "fake-deadline": { src: swap(C, " :deadline early-bird", "") },
   "pitch-to-buyer": { src: swap(B, '  (exit-on (bought? "small-tools"))\n', "") },
-  "hard-from-inferred": { src: swap(F, "(vary role\n", "(vary role :hard\n") },
+  // bf-02 is :hard; a second guessed role on one of its variants
+  "hard-from-inferred": {
+    src: F,
+    extra: [
+      { e: "act/plant-role", a: "act/person", v: "person/ivy" },
+      { e: "act/plant-role", a: "act/kind", v: kw("answered") },
+      { e: "act/plant-role", a: "act/of", v: "role" },
+      { e: "act/plant-role", a: "act/value", v: kw("podcaster") },
+      { e: "act/plant-role", a: "act/source", v: kw("inferred") },
+      { e: "act/plant-role", a: "act/at", v: "2027-11-28T09:00Z" },
+    ],
+  },
+  "refused-at-run": {
+    src: B,
+    extra: [
+      { e: "refusal/plant", a: "refusal/person", v: "person/ana" },
+      { e: "refusal/plant", a: "refusal/send", v: "small-tools-bridge/p2" },
+      { e: "refusal/plant", a: "refusal/key", v: "p2" },
+      { e: "refusal/plant", a: "refusal/check", v: "synthetic-live" },
+      { e: "refusal/plant", a: "refusal/outcome", v: kw("skipped") },
+    ],
+  },
   "synthetic-live": { src: swap(B, ':list "fernhill-news"', ':list "fernhill-test"') },
   "teach-before-fix": { src: swap(B, "  (waive teach-before-fix)", "").replace(/\n\)$/, ")").replace(/\(pace \(rate 150\)\)\n\)/, "(pace (rate 150)))") },
   "bridge-announces-pitch": { src: swap(B, ":job announce-pitch", ":job dream") },
@@ -102,11 +124,16 @@ const test = (name: string, fn: () => void) => {
   }
 };
 
-test("the seed's paths have no refusals", () => {
+test("the seed's pages have no refusals, and the only refusal at all is one the world made true at run", () => {
   for (const id of PATHS) {
+    const page = viewAt(db, id, db.log.length).verdict;
+    ok(page, id);
+    deepStrictEqual(page.findings.filter((f) => f.severity === "refuse" && f.standing === undefined).map((f) => f.message), [], id);
+    ok(page.ok, id);
     const v = verdict(text(id), { facts: fs, history: hist });
-    deepStrictEqual(v.findings.filter((f) => f.severity === "refuse").map((f) => f.message), [], id);
     deepStrictEqual(v.ran.filter((r) => r.error), [], id);
+    const refusals = v.findings.filter((f) => f.severity === "refuse").map((f) => f.check);
+    deepStrictEqual(refusals, id === "bf-2027" ? ["hard-from-inferred"] : [], id);
   }
 });
 test("every check in the pack has a planted violation", () => {
@@ -178,7 +205,8 @@ test("another actor's waiver counts at once, and history keeps both asserts", ()
   const w = fv(db)?.waived;
   ok(w !== undefined && w !== "staged" && w.counts && w.who === "agent:judge" && w.pending === undefined, JSON.stringify(w));
   deepStrictEqual(hist.filter((d) => d.e === "bf-2027" && d.a === "path/waives" && d.v === "few-values" && d.added).length, 2);
-  deepStrictEqual(at(db, "bf-2027").alarms, 0);
+  // the only live alarms are the two refusals at run (D40)
+  deepStrictEqual(at(db, "bf-2027").alarms, 2);
   // agent:judge waived Mara's teach-before-fix on bf-2027 by rule, and it counted in that same transaction
   const judged = db.log.find((x) => x.who === "agent:judge" && x.datoms.some((d) => d.a === "path/waives" && d.v === "teach-before-fix"))?.t ?? 0;
   ok(counts(finding(asOf(db, judged), "bf-2027", "teach-before-fix")?.waived));
@@ -193,8 +221,8 @@ test("a waiver goes pending again when its author later edits an offending fact"
     if (!r.ok) throw new Error(r.error);
     return r.db;
   };
-  const off = judge(db, "2028-02-02T09:00Z", [{ e: vary.e, a: vary.a, v: vary.v, added: false }]);
-  const on = judge(off, "2028-02-02T10:00Z", [{ e: vary.e, a: vary.a, v: vary.v, added: true }]);
+  const off = judge(db, "2028-03-16T09:00Z", [{ e: vary.e, a: vary.a, v: vary.v, added: false }]);
+  const on = judge(off, "2028-03-16T10:00Z", [{ e: vary.e, a: vary.a, v: vary.v, added: true }]);
   const w = fv(on)?.waived;
   ok(w !== undefined && w !== "staged" && !w.counts && w.pending === "agent:judge", JSON.stringify(w));
   ok(at(on, "bf-2027").alarms > 0);
@@ -204,11 +232,11 @@ test("world alarms can be waived by anyone", () => {
   const d0 = deliveriesOf(fs).find((x) => x.person === "person/ana" && x.send === `${BR}/p2`);
   ok(d0);
   if (!d0) return;
-  const r0 = transact(db, { who: "adapter:email", at: "2028-02-01T01:00Z", source: "observed", why: "provider: no receipt", ops: deliveryOps(keyLookup(fs), { ...d0, status: "uncertain" }) });
+  const r0 = transact(db, { who: "adapter:email", at: "2028-03-16T01:00Z", source: "observed", why: "provider: no receipt", ops: deliveryOps(keyLookup(fs), { ...d0, status: "uncertain" }) });
   ok(r0.ok);
   if (!r0.ok) return;
   for (const [who, source, rule, why] of [["mara", "assumed", undefined, 'Mara: "I checked the provider, it went."'], ["agent:desk", "inferred", "provider-log", "provider-log: the message id is in the provider's sent log"]] as const) {
-    const r = transact(r0.db, { who, at: "2028-02-01T02:00Z", source, ...(rule ? { rule } : {}), why, ops: [{ e: BR, a: "path/waives", v: "uncertain-sends", added: true }] });
+    const r = transact(r0.db, { who, at: "2028-03-16T02:00Z", source, ...(rule ? { rule } : {}), why, ops: [{ e: BR, a: "path/waives", v: "uncertain-sends", added: true }] });
     ok(r.ok);
     if (!r.ok) continue;
     const f = finding(r.db, BR, "uncertain-sends");
@@ -218,7 +246,7 @@ test("world alarms can be waived by anyone", () => {
 });
 test("a move or waiver with an inferred why and no :rule is refused, and one with :rule passes", () => {
   const waive: Op = { e: "fieldkit-c7", a: "path/waives", v: "rest-days", added: true };
-  const base = { who: "agent:judge", at: "2028-02-02T09:00Z", why: "close-window: all 3 fall in the last 48 hours" } as const;
+  const base = { who: "agent:judge", at: "2028-03-16T09:00Z", why: "close-window: all 3 fall in the last 48 hours" } as const;
   for (const extra of [{ ops: [waive] }, { ops: [], moves: [{ path: "fieldkit-c7" }] }]) {
     const no = transact(db, { ...base, source: "inferred", ...extra });
     ok(!no.ok && /names its :tx\/rule/.test(no.error), no.ok ? "committed" : no.error);
@@ -252,7 +280,7 @@ test("confirming needs your own words, and nobody confirms their own alarm", () 
   ok(!own.ok && own.error.includes("You raised this alarm, so someone else must waive it."), own.ok ? "committed" : own.error);
 });
 test("a waiver on a refusal is still refused", () => {
-  const r = transact(db, { who: "mara", at: "2028-02-02T09:00Z", why: 'Mara: "Waive it, I know what I\'m doing."', source: "assumed", ops: [{ e: "small-tools-bridge", a: "path/waives", v: "to-declared-state", added: true }] });
+  const r = transact(db, { who: "mara", at: "2028-03-16T09:00Z", why: 'Mara: "Waive it, I know what I\'m doing."', source: "assumed", ops: [{ e: "small-tools-bridge", a: "path/waives", v: "to-declared-state", added: true }] });
   ok(r.ok);
   const src = swap(swap(B, "(to pitch :after 48h)", "(to pich :after 48h)"), "  (waive teach-before-fix)", "  (waive teach-before-fix)\n  (waive to-declared-state)");
   const v = verdict(src, { facts: facts(r.db), history: history(r.db) });
@@ -362,13 +390,13 @@ test("a re-delivered key updates its status and never makes a second entity", ()
   ok(d);
   const ops = deliveryOps(keyLookup(fs), { ...d, status: "uncertain" });
   deepStrictEqual(ops.map((o) => o.a), ["delivery/status"]);
-  const r = transact(db, { who: "adapter:email", at: "2028-02-01T01:00Z", source: "observed", why: "provider: no receipt for this message", ops });
+  const r = transact(db, { who: "adapter:email", at: "2028-03-16T01:00Z", source: "observed", why: "provider: no receipt for this message", ops });
   ok(r.ok, r.ok ? "" : r.error);
   if (!r.ok) return;
   const after = deliveriesOf(facts(r.db)).filter((x) => x.person === "person/ana" && x.send === `${BR}/p2`);
   deepStrictEqual(after.map((x) => [x.id, x.status]), [[d.id, "uncertain"]]);
   // a second entity claiming the same key is refused
-  const dup = transact(db, { who: "adapter:email", at: "2028-02-01T01:00Z", source: "observed", why: "a copy", ops: [{ e: "delivery/x", a: "delivery/key", v: `person/ana|${BR}/p2|email`, added: true }] });
+  const dup = transact(db, { who: "adapter:email", at: "2028-03-16T01:00Z", source: "observed", why: "a copy", ops: [{ e: "delivery/x", a: "delivery/key", v: `person/ana|${BR}/p2|email`, added: true }] });
   ok(!dup.ok && /is unique/.test(dup.error), dup.ok ? "committed" : dup.error);
   // and uncertain-sends fires from the delivery's status
   const v = verdict(text(BR), { facts: facts(r.db), history: history(r.db) });
@@ -420,20 +448,21 @@ test("exit-on still writes exited", () => {
 // D37: since you last looked. Mara's cursor on bf-2027 sits before the agents' waivers.
 const BF = "bf-2027";
 const agentOnBf = (d: Db, after: number) => feedOf(d, BF, "mara").txs.map((x) => x.t).filter((x) => x > after);
-const mark = (d: Db, ops: Array<Op>, at = "2028-02-02T09:00Z") => {
+const mark = (d: Db, ops: Array<Op>, at = "2028-03-16T09:00Z") => {
   const r = transact(d, { who: "mara", at, source: "assumed", why: "marked seen", ops });
   if (!r.ok) throw new Error(r.error);
   return r;
 };
 test("the feed lists only agent transactions after the cursor and on that path", () => {
   const f = feedOf(db, BF, "mara");
-  ok(f.cursor !== undefined && f.txs.length === 4, JSON.stringify(f.txs.map((x) => x.t)));
-  for (const tx of f.txs) ok(tx.t > (f.cursor ?? 0) && tx.who.startsWith("agent:") && tx.who !== "agent:halter" && touchesFeed(tx, BF, messagesOf(db, BF)), `t=${tx.t}`);
-  deepStrictEqual(f.txs.map((x) => x.who), ["agent:judge", "agent:drafter", "agent:drafter", "agent:judge"]);
+  ok(f.cursor !== undefined && f.txs.length === 6, JSON.stringify(f.txs.map((x) => x.t)));
+  for (const tx of f.txs) ok(tx.t > (f.cursor ?? 0) && tx.who.startsWith("agent:") && (tx.who === "agent:halter" ? refusedOn(tx, BF) : touchesFeed(tx, BF, messagesOf(db, BF))), `t=${tx.t}`);
+  // the interpreter shows up only for its two refusals at run (D40)
+  deepStrictEqual(f.txs.map((x) => x.who), ["agent:judge", "agent:drafter", "agent:drafter", "agent:judge", "agent:halter", "agent:halter"]);
   deepStrictEqual(feedOf(db, "small-tools-bridge", "mara").txs, [], "bf's guard names the bridge but doesn't touch it");
 });
 test("a person's transaction never appears", () => {
-  const r = transact(db, { who: "teo", at: "2028-02-02T08:00Z", source: "assumed", why: 'Teo: "Hold Black Friday."', ops: [{ e: BF, a: "path/hold-until", v: "2028-02-03T00:00Z", added: true }] });
+  const r = transact(db, { who: "teo", at: "2028-03-16T08:00Z", source: "assumed", why: 'Teo: "Hold Black Friday."', ops: [{ e: BF, a: "path/hold-until", v: "2028-02-03T00:00Z", added: true }] });
   ok(r.ok);
   if (!r.ok) return;
   ok(!feedOf(r.db, BF, "mara").txs.some((x) => x.who === "teo" || x.who === "mara"));
@@ -458,9 +487,15 @@ test("marking seen moves the cursor and empties the feed", () => {
 test("with no cursor, the feed lists everything", () => {
   const r = mark(db, markSeenOps(db, "mara", BF).filter((o) => !o.added));
   deepStrictEqual(cursorOf(r.db, "mara", BF), undefined);
-  const all = r.db.log.filter((x) => /^agent:/.test(x.who) && x.who !== "agent:halter" && touchesFeed(x, BF, messagesOf(r.db, BF))).map((x) => x.t);
+  const all = r.db.log.filter((x) => (/^agent:/.test(x.who) && x.who !== "agent:halter" && touchesFeed(x, BF, messagesOf(r.db, BF))) || refusedOn(x, BF)).map((x) => x.t);
   deepStrictEqual(feedOf(r.db, BF, "mara").txs.map((x) => x.t), all);
   ok(all.length > 4 && feedHtml(r.db, BF).includes("You haven't looked at this path yet"));
+});
+test("a refusal at run is a feed row that says who it stopped and what went out, and turns its alarm on", () => {
+  const html = feedHtml(db, BF);
+  ok(html.includes("refused at run: hard-from-inferred, Jo's bf-02 got its else"), html.slice(0, 400));
+  ok(html.includes("refused at run: synthetic-live, Quin's bf-06 was skipped"));
+  ok(/refused at run: synthetic-live[^]*?refused-at-run/.test(html), "the row shows the alarm it turned on");
 });
 test("agent? is true for agent:NAME only", () => {
   const q = parseQuery('(query "agents" :find (?w) :where ((?t :tx/who ?w) (agent? ?w)))');
@@ -479,10 +514,10 @@ const attempt = (x: TxInput): string => {
 };
 test("extending a calendar close after a last-call delivery is refused", () => {
   const r = attempt(closeShift(db, { hours: 48 }));
-  deepStrictEqual(r, "refused: deadline-kept: 4 people were told close is 2027-11-30T07:59Z. It can't move to 2027-12-02T07:59Z. Make a new offer and announce it.");
+  deepStrictEqual(r, "refused: deadline-kept: 5 people were told close is 2027-11-30T07:59Z. It can't move to 2027-12-02T07:59Z. Make a new offer and announce it.");
 });
 test("closing earlier is refused too", () => {
-  ok(/^refused: deadline-kept: 4 people were told close is 2027-11-30T07:59Z\. It can't move to 2027-11-30T05:59Z\./.test(attempt(closeShift(db, { hours: -2 }))));
+  ok(/^refused: deadline-kept: 5 people were told close is 2027-11-30T07:59Z\. It can't move to 2027-11-30T05:59Z\./.test(attempt(closeShift(db, { hours: -2 }))));
 });
 test("the same edit before any deadline delivery passes, and new entrants only always passes", () => {
   deepStrictEqual(attempt(closeShift(db, { hours: 48, at: "2027-11-28T00:00Z" })), "accepted");
@@ -622,9 +657,9 @@ test("did? ignores an inferred act", () => {
 test("an act's source is fixed by the transaction that first wrote it", () => {
   // Ben's imported 2026 completion, first written observed
   const e = String(fs.find((f) => f.a === "act/at" && f.v === "2026-09-02T14:00Z")?.e);
-  const r = transact(db, { who: "teo", at: "2028-02-02T09:00Z", source: "assumed", why: 'Teo: "Fix the source."', ops: [{ e, a: "act/source", v: kw("observed"), added: false }, { e, a: "act/source", v: kw("asked"), added: true }] });
+  const r = transact(db, { who: "teo", at: "2028-03-16T09:00Z", source: "assumed", why: 'Teo: "Fix the source."', ops: [{ e, a: "act/source", v: kw("observed"), added: false }, { e, a: "act/source", v: kw("asked"), added: true }] });
   ok(!r.ok && r.error.includes("fixed by t="), r.ok ? "accepted" : r.error);
-  const same = transact(db, { who: "teo", at: "2028-02-02T09:00Z", source: "assumed", why: 'Teo: "Re-save it."', ops: [{ e, a: "act/source", v: kw("observed"), added: false }, { e, a: "act/source", v: kw("observed"), added: true }] });
+  const same = transact(db, { who: "teo", at: "2028-03-16T09:00Z", source: "assumed", why: 'Teo: "Re-save it."', ops: [{ e, a: "act/source", v: kw("observed"), added: false }, { e, a: "act/source", v: kw("observed"), added: true }] });
   ok(same.ok, same.ok ? "" : same.error);
 });
 test("a fix to one rendition leaves the other rendition's version alone", () => {
@@ -636,6 +671,62 @@ test("a fix to one rendition leaves the other rendition's version alone", () => 
   // it's the bridge copy's transaction, the last one to touch the site rendition
   deepStrictEqual(db.log.filter((x) => x.t < fix && x.datoms.some((d) => d.e === "message/p1/site" || d.e === "message/p1")).at(-1)?.t, site);
 });
+// D40: a refusal that turns true mid-run stops only that send, and only for the people it names.
+const refusals = (d: Db) => facts(d).filter((f) => f.a === "refusal/outcome").map((f) => `${String(f.e)} ${kwName(f.v)}`).sort();
+test("refused at run: Jo's guessed role gets the else, Quin's bf-06 skips, and nobody else changes", () => {
+  deepStrictEqual(refusals(db), ["refusal/jo/bf-2027/bf-02/hard-from-inferred else", "refusal/quin/bf-2027/bf-06/synthetic-live skipped"]);
+  const ds = deliveriesOf(fs).filter((d) => d.send.startsWith("bf-2027/"));
+  deepStrictEqual(ds.filter((d) => d.person === "person/jo").map((d) => `${d.send.slice(8)} ${d.message}`), ["bf-02 bf-02", "bf-03 bf-03", "bf-04 bf-04", "bf-05 bf-05", "bf-06 bf-06"]);
+  // Ana's role was asked, so she gets her variant as written
+  deepStrictEqual(ds.find((d) => d.person === "person/ana" && d.send === "bf-2027/bf-02")?.message, "bf-02-podcaster");
+  ok(!ds.some((d) => d.person === "person/quin" && d.send === "bf-2027/bf-06"));
+  ok(fs.some((f) => f.e === "person/quin" && f.a === "send/skipped" && f.v === "bf-2027/bf-06"));
+  ok(db.log.some((x) => x.who === "agent:halter" && x.why.includes("bf-06 skipped, refused at run: synthetic-live")));
+  ok(db.log.some((x) => x.who === "agent:halter" && x.why.includes("bf-02 refused at run: hard-from-inferred") && x.why.includes("its else, bf-02, went out")));
+  // every send skipped for Quin, and she still passes (D34)
+  ok(fs.some((f) => f.e === "person/quin" && f.a === "path/passed" && f.v === "bf-2027"));
+});
+test("refused at run: the alarm names the check and the send, the world raised it, and anyone can waive it", () => {
+  const v = verdict(text("bf-2027"), { facts: fs, history: hist });
+  const as = v.findings.filter((f) => f.check === "refused-at-run");
+  deepStrictEqual(as.map((f) => f.message).sort(), [
+    "1 people in bf-2027 hit hard-from-inferred mid-run. Their bf-02 fell back to its else, or was skipped. Fix the cause.",
+    "1 people in bf-2027 hit synthetic-live mid-run. Their bf-06 fell back to its else, or was skipped. Fix the cause.",
+  ]);
+  ok(as.every((f) => (f.raisedBy ?? []).length === 0 && f.severity === "alarm"), JSON.stringify(as.map((f) => [f.raisedBy, f.waived])));
+  const r = transact(db, { who: "mara", at: "2028-03-16T01:00Z", source: "assumed", why: 'Mara: "Jo is asked next week."', ops: [{ e: "bf-2027", a: "path/waives", v: "refused-at-run", added: true }] });
+  ok(r.ok, r.ok ? "" : r.error);
+  const w = finding(r.db, "bf-2027", "refused-at-run")?.waived;
+  ok(w !== undefined && w !== "staged" && w.counts && !w.pending, JSON.stringify(w));
+});
+test("refusalAt: a :hard variant from a guess is refused and its else is safe; a synthetic person is refused everything", () => {
+  const p = fromFacts("bf-2027", fs);
+  const s = p?.states.flatMap((x) => x.sends).find((x) => x.key === "bf-02");
+  ok(s?.vary);
+  const w = { facts: fs, history: hist };
+  deepStrictEqual(refusalAt(s, "person/jo", "bf-02-writer", w)?.check, "hard-from-inferred");
+  deepStrictEqual(refusalAt(s, "person/jo", "bf-02", w), undefined);
+  deepStrictEqual(refusalAt(s, "person/ana", "bf-02-podcaster", w), undefined);
+  deepStrictEqual(refusalAt(s, "person/quin", "bf-02", w)?.check, "synthetic-live");
+});
+test("a commit answers only for what it adds: the head's refusal doesn't refuse an edit, a new one does", () => {
+  const head = verdict(text("bf-2027"), { facts: fs, history: hist });
+  const edit = judge(verdict(text("bf-2027").replace('"bf-03" :on', '"bf-03"  :on'), { facts: fs, history: hist }), refusalKeys(head), "commit");
+  ok(edit.ok, JSON.stringify(edit.findings.filter((f) => f.severity === "refuse")));
+  deepStrictEqual(edit.findings.filter((f) => f.standing === "before").map((f) => f.check), ["hard-from-inferred"]);
+  const worse = judge(verdict(text("bf-2027").replace(' (else "bf-02")', ""), { facts: fs, history: hist }), refusalKeys(head), "commit");
+  ok(!worse.ok);
+  deepStrictEqual(worse.findings.filter((f) => f.severity === "refuse" && f.standing === undefined).map((f) => f.check), ["else-on-every-vary"]);
+  // and the finding that was already there still shows
+  ok(worse.findings.some((f) => f.check === "hard-from-inferred" && f.standing === "before"));
+});
+test("a page counts a refusal only when its version was committed with it: Jo's arrival is true at run", () => {
+  const before = viewAt(db, "bf-2027", db.log.find((x) => x.why.includes("role-from-click") || x.rule === "role-from-click")!.t - 1).verdict;
+  ok(before && !before.findings.some((f) => f.check === "hard-from-inferred"));
+  const page = viewAt(db, "bf-2027", db.log.length).verdict;
+  deepStrictEqual(page?.findings.filter((f) => f.check === "hard-from-inferred").map((f) => f.standing), ["at-run"]);
+  ok(page?.ok);
+});
 test("one uncertain delivery: uncertain-sends fires, and nothing retried it", () => {
   const ds = deliveriesOf(fs).filter((x) => x.status === "uncertain");
   deepStrictEqual(ds.map((x) => `${x.person} ${x.send} ${x.via}`), ["person/ana five-day-tools/day-5 email"]);
@@ -645,5 +736,5 @@ test("one uncertain delivery: uncertain-sends fires, and nothing retried it", ()
   deepStrictEqual(hist.filter((x) => x.a === "delivery/key" && x.added && x.v === "person/ana|five-day-tools/day-5|email").length, 1);
   deepStrictEqual(hist.filter((x) => x.e === "person/ana" && x.a === "send/sent" && x.v === "five-day-tools/day-5" && x.added).length, 1);
 });
-console.log(failed === 0 ? `${PACK.length + 51} checks passed` : `${failed} failed`);
+console.log(failed === 0 ? `${PACK.length + 57} checks passed` : `${failed} failed`);
 if (failed > 0) process.exit(1);

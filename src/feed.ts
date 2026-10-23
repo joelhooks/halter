@@ -43,12 +43,18 @@ export const messagesOf = (db: Db, path: string): Set<string> => {
   return new Set(p ? allSends(p).flatMap((s) => [s.key, ...(s.vary?.cases.map((c) => c.message) ?? []), ...(s.vary?.else === undefined ? [] : [s.vary.else])]) : []);
 };
 
-// The feed: agent transactions after the cursor (all of them with no cursor) that touched the path.
+// A refusal at run is the world raising an alarm (D40), so the interpreter's transaction that stopped a send
+// on this path joins the feed though its other path events stay out.
+export const refusedOn = (tx: Tx, path: string): boolean =>
+  tx.who === "agent:halter" && tx.datoms.some((d) => d.a === "refusal/send" && d.added && String(d.v).startsWith(`${path}/`));
+
+// The feed: agent transactions after the cursor (all of them with no cursor) that touched the path, and the
+// interpreter's refusals at run on it.
 export const feedOf = (db: Db, path: string, who: string): { readonly cursor: number | undefined; readonly txs: ReadonlyArray<Tx> } => {
   const cursor = cursorOf(db, who, path);
   const r = run(feedQuery, { facts: facts(db), history: [] }, new Map([["?seen", cursor ?? 0]]));
   if (!r.ok) throw new Error(r.error);
   const ts = new Set(r.rows.map((x) => Number(x[0])));
   const msgs = messagesOf(db, path);
-  return { cursor, txs: db.log.filter((tx) => ts.has(tx.t) && touchesFeed(tx, path, msgs)) };
+  return { cursor, txs: db.log.filter((tx) => (ts.has(tx.t) && touchesFeed(tx, path, msgs)) || (tx.t > (cursor ?? 0) && refusedOn(tx, path))) };
 };

@@ -54,7 +54,17 @@ export const verdictView = (h: H, v: Verdict | undefined): Html =>
     ? h.p([h.Class("verdict none")], ["No path here yet."])
     : !v.ok
       ? h.p([h.Class("verdict bad")], [h.b([], ["Refused."]), ` ${v.refusals} ${v.refusals === 1 ? "problem" : "problems"} to fix before this ships.`])
-      : h.p([h.Class("verdict good")], [h.b([], ["Ships."]), ` ${v.alarms === 0 ? "No live alarms." : `${v.alarms} live ${v.alarms === 1 ? "alarm" : "alarms"}, which the author can ship past.`}`]);
+      : h.p([h.Class("verdict good")], [h.b([], ["Ships."]), ` ${v.alarms === 0 ? "No live alarms." : `${v.alarms} live ${v.alarms === 1 ? "alarm" : "alarms"}, which the author can ship past.`}${standingText(v)}`]);
+// refusals that don't refuse (D40): a commit answers only for what it adds, and the world's refusals act at run
+const standingText = (v: Verdict): string => {
+  const n = v.findings.filter((f) => f.severity === "refuse" && f.standing !== undefined).length;
+  return n === 0 ? "" : ` ${n} ${n === 1 ? "refusal doesn't" : "refusals don't"} refuse it: halter stops only the sends ${n === 1 ? "it names" : "they name"}, for the people ${n === 1 ? "it names" : "they name"}.`;
+};
+const STANDING: Record<NonNullable<Finding["standing"]>, string> = {
+  before: "already there before this edit, so it doesn't refuse it",
+  "at-run": "true at run: the world made it true after this version was committed, so halter stops only the sends it names",
+  "old-version": "on a version people still run: halter stops only the sends it names, for them",
+};
 
 // confirm: the editor offers Mara's confirmation for a pending waiver, enabled once the why holds a quote.
 const findingView = (h: H, f: Finding, confirm: "off" | "ready" | "waiting"): Html => {
@@ -77,7 +87,7 @@ const findingView = (h: H, f: Finding, confirm: "off" | "ready" | "waiting"): Ht
         ]
       : [];
   return h.li(
-    [h.Class(`finding ${f.severity}${counts ? " waived" : pending ? " pending" : ""}`), h.DataAttribute("line", String(f.line))],
+    [h.Class(`finding ${f.severity}${counts ? " waived" : pending ? " pending" : ""}${f.standing ? " standing" : ""}`), h.DataAttribute("line", String(f.line))],
     [
       h.span([h.Class("sev")], [f.severity]),
       " ",
@@ -85,6 +95,7 @@ const findingView = (h: H, f: Finding, confirm: "off" | "ready" | "waiting"): Ht
       " ",
       mute(h, `${f.version === undefined ? "" : `version ${f.version}, `}line ${f.line}`),
       ...waived,
+      ...(f.standing ? [" ", h.i([], [STANDING[f.standing]])] : []),
       ...act,
       h.br([]),
       f.message,
