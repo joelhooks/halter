@@ -6,12 +6,12 @@
 // Structure is fixed at entry (D32): each run reads the path as of its version, and only a move changes
 // that under people. Holds are the exception: a run checks holds on the current path, whatever its version.
 // The real runtime is XState v6 actors on Effect's Clock; this loop only makes the seed's events.
-import { asOf, basis, dateMs, empty, facts, history, Kw, kw, moveText, msDate, transact, type Db, type Move, type Op, type Tx, type TxInput } from "./db.ts";
+import { asOf, basis, dateMs, empty, facts, history, Kw, kw, moveText, msDate, transact, type Db, type Move, type Op, type Reply, type Tx, type TxInput } from "./db.ts";
 import { isStructure, versionId } from "./version.ts";
 import { MESSAGE, renditionId } from "./content.ts";
-import { deliveryOps } from "./delivery.ts";
+import { deliveriesOf, deliveryId, deliveryOps } from "./delivery.ts";
 import { bonusEvent, deadlineRefusal, eventInstant, type Broken } from "./deadline.ts";
-import { fromFacts, type Path, type Send } from "./model.ts";
+import { allSends, dimFromFacts, fromFacts, type Path, type Send } from "./model.ts";
 import { answer, holds, latestAnswer, people, type World } from "./pred.ts";
 import { printAction, printPred, printVia, duration } from "./printer.ts";
 
@@ -25,6 +25,40 @@ export interface RunRefusal {
   readonly why: string;
 }
 const firstName = (w: World, person: string) => String(w.facts.find((f) => f.e === person && f.a === "person/name")?.v ?? person.replace(/^person\//, "")).split(" ")[0] ?? person;
+// What a person told us in reply to a send (D43). A reply, a form and a click on an answer link are all
+// the person telling us, so an answer to a send that :asks a dimension is an asked answered act on the
+// delivery it answered. A value the dimension doesn't declare is kept as unknown, with what they said:
+// never drop what a person told us. A click on a send that asks nothing is only observed.
+export const replyOps = (db: Db, r: Reply, at: string, alongside: ReadonlyArray<Op> = []): { readonly asked: boolean; readonly ops: Array<Op> } => {
+  const put = (e: string, a: string, v: Op["v"]): Op => ({ e, a, v, added: true });
+  const fs = facts(db);
+  const [path = "", key = ""] = [r.send.slice(0, r.send.lastIndexOf("/")), r.send.slice(r.send.lastIndexOf("/") + 1)];
+  const d = deliveriesOf(fs).find((x) => x.person === r.person && x.send === r.send && x.status === "sent");
+  const delivered = d ? deliveryId(d.person, d.send, d.via) : undefined;
+  // the send as the person got it: its structure as of the transaction that delivered it
+  const t = delivered ? db.log.find((tx) => tx.datoms.some((x) => x.e === delivered && x.a === "delivery/send" && x.added))?.t : undefined;
+  const send = allSends(fromFacts(path, facts(t === undefined ? db : asOf(db, t))) ?? { states: [] } as unknown as Path).find((s) => s.key === key);
+  const who = r.person.replace(/^person\//, "");
+  if (send?.asks === undefined) return { asked: false, ops: [put(r.person, "person/tags", `clicked:${r.send}:${r.value}`)] };
+  const dim = dimFromFacts(send.asks, fs);
+  // values the same transaction declares count, as a survey import declares its answers' values
+  const declared = (dim?.values.includes(r.value) ?? false) || alongside.some((o) => o.added && o.e === `dim/${send.asks}` && o.a === "dim/values" && o.v instanceof Kw && o.v.name === r.value);
+  const e = `act/${who}/${r.send}/${declared ? r.value : "unknown"}`;
+  return {
+    asked: true,
+    ops: [
+      put(e, "act/person", r.person),
+      put(e, "act/kind", kw("answered")),
+      put(e, "act/of", send.asks),
+      put(e, "act/value", kw(declared ? r.value : "unknown")),
+      ...(declared ? [] : [put(e, "act/said", r.value)]),
+      ...(delivered ? [put(e, "act/delivery", delivered)] : []),
+      put(e, "act/at", r.at ?? at),
+      put(e, "act/source", kw("asked")),
+    ],
+  };
+};
+
 // Owning a bonus is a bought act for its product (D39, D41); a refund retracts the act.
 export const ownsBonus = (w: World, person: string, product: string): boolean =>
   w.facts.some((f) => f.a === "act/kind" && f.v instanceof Kw && f.v.name === "bought" && w.facts.some((g) => g.e === f.e && g.a === "act/of" && g.v === product) && w.facts.some((g) => g.e === f.e && g.a === "act/person" && g.v === person));
@@ -502,7 +536,13 @@ export const interpret = (authored: ReadonlyArray<TxInput>, horizon: string, opt
     const at = dateMs(input.at) ?? 0;
     fire(at);
     now = Math.max(now, at);
-    const r = transact(db, input);
+    // replies become acts on the deliveries they answer, read as of now (D43)
+    const { replies, ...plain } = input;
+    const resolved = (replies ?? []).map((x) => replyOps(db, x, input.at, input.ops));
+    // only clicks on sends that ask nothing: what we saw them do, observed
+    const source = resolved.some((x) => x.asked) ? "asked" : input.ops.length === 0 ? "observed" : input.source;
+    const asTx: TxInput = replies === undefined ? input : { ...plain, source, ops: [...input.ops, ...resolved.flatMap((x) => x.ops)] };
+    const r = transact(db, asTx);
     if (!r.ok) throw new Error(`${r.error} (${input.why})`);
     db = r.db;
     track(r.tx);

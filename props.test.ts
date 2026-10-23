@@ -13,8 +13,9 @@ import { deliveriesOf } from "./src/delivery.ts";
 import { feedOf } from "./src/feed.ts";
 import { parseQuery, run } from "./src/query.ts";
 import { AUTHORED, HORIZON, PATHS, seedDb } from "./src/seed.ts";
-import { interpret } from "./src/run.ts";
+import { interpret, replyOps } from "./src/run.ts";
 import { parseVersion } from "./src/version.ts";
+import { kwName } from "./src/time.ts";
 
 const H = 3_600_000;
 const keys = (ts: ReadonlyArray<Triple>) => sortTriples(ts).map(tripleKey);
@@ -871,6 +872,56 @@ prop("objection-has-fix is quiet exactly when every objection value has a fix or
       deepStrictEqual(got, want, JSON.stringify({ marked, picks }));
       // quiet exactly when nothing is missing
       deepStrictEqual(got.length === 0, want.length === 0);
+    }),
+    { numRuns: Number(process.env.RUNS ?? 60) },
+  );
+});
+
+prop("every answered act with act/delivery points at a delivery of a send whose :asks is the act's act/of", () => {
+  const db0 = seedDb();
+  const fs0 = facts(db0);
+  const val = (fs: ReadonlyArray<Triple>, e: Triple["e"], a: string) => fs.find((t) => t.e === e && t.a === a)?.v;
+  // what each send asks, from the facts: PATH/KEY -> dimension name
+  const asks = (fs: ReadonlyArray<Triple>) => {
+    const out = new Map<string, string>();
+    for (const t of fs.filter((x) => x.a === "send/asks")) out.set(`${String(val(fs, t.e, "send/path"))}/${String(val(fs, t.e, "send/key"))}`, String(t.v).replace(/^dim\//, ""));
+    return out;
+  };
+  const holdsFor = (fs: ReadonlyArray<Triple>) => {
+    const asked = asks(fs);
+    for (const t of fs.filter((x) => x.a === "act/delivery")) {
+      ok(kwName(val(fs, t.e, "act/kind")) === "answered", String(t.e));
+      const send = String(val(fs, String(t.v), "delivery/send"));
+      deepStrictEqual(asked.get(send), String(val(fs, t.e, "act/of")), `${String(t.e)} -> ${String(t.v)}`);
+      deepStrictEqual(kwName(val(fs, t.e, "act/source")), "asked", String(t.e));
+    }
+  };
+  holdsFor(fs0);
+  const asked = asks(fs0);
+  const delivered = deliveriesOf(fs0).filter((d) => d.status === "sent").map((d) => [d.person, d.send] as const);
+  const people = [...new Set(fs0.filter((t) => t.a === "person/name").map((t) => String(t.e)))];
+  const sends = [...new Set(fs0.filter((t) => t.a === "send/key").map((t) => `${String(val(fs0, t.e, "send/path"))}/${String(t.v)}`))];
+  const values = [...new Set(fs0.filter((t) => t.a === "dim/values").map((t) => String(t.v))), "my-cat-ate-it", "unsure"];
+  const replyArb = fc.record({
+    to: fc.oneof(fc.constantFrom(...delivered), fc.tuple(fc.constantFrom(...people), fc.constantFrom(...sends))),
+    value: fc.constantFrom(...values),
+    how: fc.constantFrom("reply" as const, "form" as const, "click" as const),
+  });
+  fc.assert(
+    fc.property(fc.array(replyArb, { minLength: 1, maxLength: 6 }), (rs) => {
+      let db = db0;
+      rs.forEach((r, i) => {
+        const reply = { person: r.to[0], send: r.to[1], value: r.value, how: r.how };
+        const out = replyOps(db, reply, `2028-03-16T0${i}:00Z`);
+        const got = deliveriesOf(facts(db)).some((d) => d.person === reply.person && d.send === reply.send && d.status === "sent");
+        // an answer to an :asks send is never dropped; anything else writes no act
+        deepStrictEqual(out.asked, asked.has(reply.send), JSON.stringify(reply));
+        deepStrictEqual(out.ops.some((o) => o.a === "act/delivery"), out.asked && got, JSON.stringify(reply));
+        const x = transact(db, { who: "adapter:mail", at: `2028-03-16T0${i}:00Z`, why: "reply", source: out.asked ? "asked" : "observed", ops: out.ops });
+        if (!x.ok) throw new Error(x.error);
+        db = x.db;
+      });
+      holdsFor(facts(db));
     }),
     { numRuns: Number(process.env.RUNS ?? 60) },
   );

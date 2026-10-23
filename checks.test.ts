@@ -10,7 +10,7 @@ import type { Db as FeedDb } from "./src/db.ts";
 const feedHtml = (d: FeedDb, id: string): string => renderHtml((h) => feedView(h, d, id));
 import type { Finding } from "./src/checks.ts";
 import { dimFromFacts, fromFacts, toFacts, type Path } from "./src/model.ts";
-import { interpret, refusalAt } from "./src/run.ts";
+import { interpret, refusalAt, replyOps } from "./src/run.ts";
 import { holds } from "./src/pred.ts";
 import { parseVersion } from "./src/version.ts";
 import { kwName } from "./src/time.ts";
@@ -83,6 +83,7 @@ const PLANTED: Record<string, { readonly src: string; readonly extra?: ReadonlyA
   },
   "synthetic-live": { src: swap(B, ':list "fernhill-news"', ':list "fernhill-test"') },
   "bonus-declared": { src: swap(F, ':bonus "template-pack"', ':bonus "sticker-pack"') },
+  "asks-declared": { src: swap(W, "\n      :asks why-not", "") },
   // someone still in the sale who already owns the template pack, with the bonus send ahead of them
   "bonus-to-owner": {
     src: F,
@@ -97,7 +98,7 @@ const PLANTED: Record<string, { readonly src: string; readonly extra?: ReadonlyA
   "bridge-announces-pitch": { src: swap(B, ":job announce-pitch", ":job dream") },
   "rest-days": { src: swap(C, '"c7-06" :on "2027-03-08T17:00Z"', '"c7-06" :on "2027-03-03T17:00Z"') },
   "few-values": { src: swap(F, "  (waive few-values)\n", "") },
-  "post-close-survey": { src: swap(F, '\n    (send "bf-06" :on "2027-12-02T17:00Z"\n      :job survey\n      :via email))', ")") },
+  "post-close-survey": { src: swap(F, '\n    (send "bf-06" :on "2027-12-02T17:00Z"\n      :job survey\n      :via email\n      :asks why-not))', ")") },
   "message-exists": { src: swap(B, '(send "p2" :after 24h', '(send "p2b" :after 24h') },
   "via-has-rendition": { src: swap(B, '      :job proof\n      :via email\n', '      :job proof\n      :via (or sms email)\n') },
   "support-to-buyers": { src: swap(B, ":job proof", ":job support") },
@@ -889,5 +890,84 @@ test("one uncertain delivery: uncertain-sends fires, and nothing retried it", ()
   deepStrictEqual(hist.filter((x) => x.a === "delivery/key" && x.added && x.v === "person/ana|five-day-tools/day-5|email").length, 1);
   deepStrictEqual(hist.filter((x) => x.e === "person/ana" && x.a === "send/sent" && x.v === "five-day-tools/day-5" && x.added).length, 1);
 });
-console.log(failed === 0 ? `${PACK.length + 72} checks passed` : `${failed} failed`);
+// D43: a send says what it asks.
+const findingsOf = (src: string, check: string) => verdict(src, { facts: fs, history: hist }).findings.filter((f) => f.check === check).map((f) => f.message);
+test("a survey send with no :asks is refused by asks-declared", () => {
+  deepStrictEqual(findingsOf(swap(W, "\n      :asks why-not", ""), "asks-declared"), ["send w1 is a survey with no :asks. A survey says what it asks: :asks DIM, with DIM declared."]);
+  deepStrictEqual(findingsOf(W, "asks-declared"), []);
+  // every survey in the seed asks something
+  for (const id of PATHS) deepStrictEqual(findingsOf(text(id), "asks-declared"), [], id);
+});
+test("an :asks naming an undeclared dimension is refused", () => {
+  deepStrictEqual(findingsOf(swap(W, ":asks why-not", ":asks why-ever"), "asks-declared"), ["send w1 asks a dimension that isn't declared. A survey says what it asks: :asks DIM, with DIM declared."]);
+  // allowed on any send, so long as the dimension is declared
+  deepStrictEqual(findingsOf(text("spring-note"), "asks-declared"), []);
+  deepStrictEqual(findingsOf(swap(text("spring-note"), ":asks role", ":asks job-title"), "asks-declared").length, 1);
+});
+const valOf = (ops: ReadonlyArray<Op>, a: string) => ops.find((o) => o.a === a)?.v;
+test("an answer to an :asks send is asked and records its delivery, a click included", () => {
+  const get = (e: string, a: string) => fs.find((t) => t.e === e && t.a === a)?.v;
+  const answers = fs.filter((t) => t.a === "act/of" && t.v === "why-not").map((t) => String(t.e));
+  for (const e of answers) {
+    deepStrictEqual(kwName(get(e, "act/source")), "asked", e);
+    deepStrictEqual(get(String(get(e, "act/delivery")), "delivery/send"), "why-didnt-you-buy/w1", e);
+  }
+  // Dee clicked "no time" in the email: asked, on her w1 delivery
+  const click = replyOps(db, { person: "person/dee", send: "why-didnt-you-buy/w1", value: "no-time", how: "click" }, "2028-03-16T09:00Z");
+  ok(click.asked);
+  deepStrictEqual(kwName(valOf(click.ops, "act/source")), "asked");
+  deepStrictEqual(kwName(valOf(click.ops, "act/kind")), "answered");
+  deepStrictEqual(valOf(click.ops, "act/of"), "why-not");
+  deepStrictEqual(valOf(click.ops, "act/delivery"), "delivery/dee/why-didnt-you-buy/w1/email");
+  // the role answers the drafter read came from clicks on the spring note's links
+  const roles = fs.filter((t) => t.a === "act/of" && t.v === "role").map((t) => String(t.e)).filter((e) => kwName(get(e, "act/source")) === "asked");
+  deepStrictEqual(roles.map((e) => get(String(get(e, "act/delivery")), "delivery/send")), roles.map(() => "spring-note/spring-note"));
+  // Jo's guessed role has no delivery behind it
+  const jo = fs.filter((t) => t.a === "act/person" && t.v === "person/jo").map((t) => String(t.e)).filter((e) => get(e, "act/of") === "role");
+  deepStrictEqual(jo.map((e) => [kwName(get(e, "act/source")), get(e, "act/delivery")]), [["inferred", undefined]]);
+});
+test("an answer the dimension doesn't declare is kept as unknown, with what they said", () => {
+  const r = replyOps(db, { person: "person/ana", send: "why-didnt-you-buy/w1", value: "my-cat-ate-it", how: "form" }, "2028-03-16T09:00Z");
+  deepStrictEqual(kwName(valOf(r.ops, "act/value")), "unknown");
+  deepStrictEqual(valOf(r.ops, "act/said"), "my-cat-ate-it");
+  deepStrictEqual(kwName(valOf(r.ops, "act/source")), "asked");
+  ok(transact(db, { who: "adapter:mail", at: "2028-03-16T09:00Z", why: "form", source: "asked", ops: r.ops }).ok);
+});
+test("a click with no :asks behind it is observed, and writes no answer", () => {
+  const r = replyOps(db, { person: "person/ana", send: "bf-2027/bf-01", value: "writer", how: "click" }, "2028-03-16T09:00Z");
+  ok(!r.asked);
+  ok(!r.ops.some((o) => o.a === "act/kind"));
+  // the interpreter writes it observed
+  const out = interpret([...AUTHORED, { who: "adapter:site", at: "2028-03-16T09:00Z", why: 'Site: clicked "I write" in bf-01', source: "asked", ops: [], replies: [{ person: "person/ana", send: "bf-2027/bf-01", value: "writer", how: "click" }] }], HORIZON);
+  const last = out.log.find((x) => x.why.startsWith("Site: clicked"))!;
+  deepStrictEqual(last.source, "observed");
+  // and the transactor refuses replies handed to it directly
+  ok(!transact(db, { who: "x", at: "2028-03-16T09:00Z", why: "x", source: "asked", ops: [], replies: [{ person: "person/ana", send: "x/y", value: "z", how: "reply" }] }).ok);
+});
+test("post-close-survey fires when the only survey after close asks a dimension with no objections", () => {
+  deepStrictEqual(findingsOf(F, "post-close-survey"), []);
+  deepStrictEqual(findingsOf(swap(F, ":asks why-not))", ":asks role))"), "post-close-survey"), [
+    "nothing in bf-2027 or after it asks non-buyers why. A survey send after close counts when its :asks dimension marks :objections.",
+  ]);
+});
+test("the printer round-trips :asks", () => {
+  const r = readPath(W);
+  deepStrictEqual(r.problems, []);
+  deepStrictEqual(r.path?.states[0]?.sends.find((x) => x.key === "w1")?.asks, "why-not");
+  deepStrictEqual(printPath(r.path!), W);
+  deepStrictEqual(readPath(text("spring-note")).path?.states[0]?.sends[0]?.asks, "role");
+  // LANGUAGE.md's w1 block, as written
+  ok(W.includes('    (send "w1" :after 24h\n      :job survey\n      :via email\n      :asks why-not)'));
+});
+test("the reworded w1: answers record which wording they answered", () => {
+  const get = (e: string, a: string) => fs.find((t) => t.e === e && t.a === a)?.v;
+  const wording = (p: string) => get(`delivery/${p}/why-didnt-you-buy/w1/email`, "delivery/content");
+  deepStrictEqual(wording("ana"), wording("ben"));
+  ok(Number(wording("dee")) > Number(wording("ana")));
+  // Ben replied after the rewording, to the first wording he got
+  const ben = fs.find((t) => t.a === "act/person" && t.v === "person/ben" && String(t.e).includes("/w1/"))!.e;
+  ok(String(get(String(ben), "act/at")) > "2027-11-29T10:00Z");
+  deepStrictEqual(get(String(get(String(ben), "act/delivery")), "delivery/content"), wording("ana"));
+});
+console.log(failed === 0 ? `${PACK.length + 80} checks passed` : `${failed} failed`);
 if (failed > 0) process.exit(1);

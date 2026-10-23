@@ -384,7 +384,7 @@ export const readPath = (source: string): Extracted => {
           const xh = head(x);
           if (xh === "send") {
             const s = split(x);
-            only(s.keys, ["after", "on", "job", "via", "deadline", "bonus", "answers"], "send");
+            only(s.keys, ["after", "on", "job", "via", "deadline", "asks", "answers", "bonus"], "send");
             const key = name(s.pos[0], "the message id", x.at);
             if (key === undefined) continue;
             const e = sendId(id, key);
@@ -395,6 +395,7 @@ export const readPath = (source: string): Extracted => {
             const job = s.keys.has("job") ? sym(s.keys.get("job"), "job", x.at) : undefined;
             const deadline = s.keys.has("deadline") ? sym(s.keys.get("deadline"), "deadline", x.at) : undefined;
             const bonus = s.keys.has("bonus") ? name(s.keys.get("bonus"), "the :bonus product", x.at) : undefined;
+            const asks = s.keys.has("asks") ? sym(s.keys.get("asks"), "the :asks dimension", x.at) : undefined;
             // :answers (DIM VALUE), or a list of pairs ((DIM VALUE) (DIM VALUE)) (D42)
             const answers: Array<Answer> = [];
             const av = s.keys.get("answers");
@@ -413,7 +414,7 @@ export const readPath = (source: string): Extracted => {
             }
             const via = viaOf(s.keys.get("via"), key, x.at);
             if (via) via.channels.forEach((_, j) => mark(viaId(id, key, j + 1), undefined, s.keys.get("via")?.at));
-            for (const [k, a] of [["after", "send/after"], ["on", "send/on"], ["job", "send/job"], ["via", "send/via-op"], ["deadline", "send/deadline"], ["bonus", "send/bonus"]] as const) mark(e, a, s.keys.get(k)?.at);
+            for (const [k, a] of [["after", "send/after"], ["on", "send/on"], ["job", "send/job"], ["via", "send/via-op"], ["deadline", "send/deadline"], ["asks", "send/asks"], ["bonus", "send/bonus"]] as const) mark(e, a, s.keys.get(k)?.at);
             let vary: Send["vary"];
             for (const v of s.pos.slice(1)) {
               if (head(v) !== "vary") {
@@ -444,6 +445,7 @@ export const readPath = (source: string): Extracted => {
               ...(job === undefined ? {} : { job }),
               ...(deadline === undefined ? {} : { deadline }),
               ...(bonus === undefined ? {} : { bonus }),
+              ...(asks === undefined ? {} : { asks }),
               ...(answers.length === 0 ? {} : { answers }),
               ...(vary === undefined ? {} : { vary }),
             });

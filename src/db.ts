@@ -84,6 +84,18 @@ export interface TxInput {
   readonly ops: ReadonlyArray<Op>;
   readonly undoes?: number;
   readonly moves?: ReadonlyArray<Move>;
+  // what people told us in reply to a send (D43); the interpreter turns each into an act on the delivery
+  readonly replies?: ReadonlyArray<Reply>;
+}
+// A reply, a form or a click on an answer link: all three are the person telling us.
+export interface Reply {
+  readonly person: string;
+  // PATH/KEY of the send they answered
+  readonly send: string;
+  readonly value: string;
+  readonly how: "reply" | "form" | "click";
+  // when they answered, if it differs from the transaction
+  readonly at?: string;
 }
 export type Transacted = { readonly ok: true; readonly db: Db; readonly tx: Tx } | { readonly ok: false; readonly error: string };
 
@@ -145,6 +157,8 @@ export const SCHEMA: ReadonlyArray<Attr> = [
   a("act/kind", "keyword", "bought, finished, did or answered"),
   a("act/of", "string", "the product, course or act it's about; for answered, the dimension"),
   a("act/at", "date", "when it happened; freshness reads this, never the transaction"),
+  a("act/delivery", "ref", "the delivery an answered act replied to (D43)"),
+  a("act/said", "string", "what the person said, when it isn't a value the dimension declares; the value is then unknown"),
   a("act/source", "keyword", "how we know, from the transaction that first wrote the act; a correction doesn't change it"),
   a("act/value", "keyword", "an answered act's value; a person's value for the dimension follows their latest answered act"),
   // A refusal at run (D40): the interpreter stopped one send for one person, and how.
@@ -206,6 +220,7 @@ export const SCHEMA: ReadonlyArray<Attr> = [
   a("answers/rank", "number", "the pair's place on the send"),
   a("answers/dim", "ref", "the dimension"),
   a("answers/value", "keyword", "the objection, one of the dimension's :objections"),
+  a("send/asks", "ref", "the dimension the send asks the person for (D43); required on survey sends"),
   a("send/bonus", "string", "the slug of the bonus this send offers; every variant carries it"),
   a("send/vary-by", "ref", "the dimension the copy varies by"),
   a("send/vary-hard", "boolean", "true when the copy states who the person is"),
@@ -321,6 +336,7 @@ export const asOf = (db: Db, t: number): Db => ({ log: db.log.filter((tx) => tx.
 
 export const transact = (db: Db, input: TxInput): Transacted => {
   if (input.why.trim() === "") return { ok: false, error: "refused: a transaction needs a why. Quote the words that justify it." };
+  if ((input.replies ?? []).length > 0) return { ok: false, error: "refused: replies are answered by the interpreter, which finds the delivery each one answers" };
   if (input.who.trim() === "") return { ok: false, error: "refused: a transaction needs a who." };
   if (!SOURCES.includes(input.source)) return { ok: false, error: "refused: :tx/source is asked, observed, inferred or assumed" };
   if (input.source === "inferred" && !input.rule?.trim()) return { ok: false, error: "refused: an inferred transaction names its :tx/rule" };

@@ -6,7 +6,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { BIB, BIB_BY_KEY, titleOf, entryHtml, entryText, GROUP_ORDER, TERMS, workText } from "./src/bib.ts";
 import { DOCTRINE, PACK, SHAPE, UNBUILT } from "./src/checks.ts";
-import { facts, history, kw, ATTRS, type Tx, type Val } from "./src/db.ts";
+import { asOf, facts, history, kw, ATTRS, type Tx, type Val } from "./src/db.ts";
 import { esc, highlight, highlightTs } from "./src/hl.ts";
 import { generateMachine, INTERPRETER, REGISTRY } from "./src/machine.ts";
 import { footnotesMd, newCtx, render, sectionOf, slugify, toMarkdown, type Ctx } from "./src/md.ts";
@@ -183,6 +183,30 @@ const whyNotFig = (): Fig => {
     md: `\`\`\`lisp\n${dim}\n\`\`\`\n\n\`\`\`lisp\n${fitSource(WHY_NOT_ANSWERS)}\n\`\`\`\n\n${mdTable(query.find, rows)}`,
   };
 };
+// D43: each answer records the delivery it answered, and each delivery the content version it carried,
+// so answers to a reworded question split by wording.
+const wordingsFig = (): Fig => {
+  const get = (e: string, a: string) => fs.find((t) => String(t.e) === e && t.a === a)?.v;
+  const answers = fs.filter((t) => t.a === "act/of" && t.v === "why-not").map((t) => String(t.e)).filter((e) => get(e, "act/delivery") !== undefined);
+  const versions = [...new Set(answers.map((e) => Number(get(String(get(e, "act/delivery")), "delivery/content"))))].sort((x, y) => x - y);
+  if (versions.length !== 2) throw new Error(`w1 should have two wordings with answers, got ${versions.length}`);
+  const ORD = ["first", "second"];
+  const blocks = versions.map((c, i) => {
+    const subject = String(facts(asOf(db, c)).find((t) => t.e === "message/w1/email" && t.a === "rendition/subject")?.v ?? "");
+    const mine = answers.filter((e) => Number(get(String(get(e, "act/delivery")), "delivery/content")) === c);
+    const who = [...new Set(mine.map((e) => name(String(get(e, "act/person"))).split(" ")[0]))].sort();
+    const by = new Map<string, number>();
+    for (const e of mine) by.set(kwName(get(e, "act/value")), (by.get(kwName(get(e, "act/value"))) ?? 0) + 1);
+    const rows = [...by].sort(([x], [y]) => x.localeCompare(y)).map(([v, n]) => [v, String(n)]);
+    return { head: `Answers to the ${ORD[i]} wording, "${subject}", from ${who.join(" and ")}`, rows };
+  });
+  return {
+    html: blocks
+      .map((b) => `<p><strong>${esc(b.head)}</strong></p><div class="table-wrap"><table><thead><tr><th>why-not</th><th>answers</th></tr></thead><tbody>${b.rows.map((x) => `<tr>${x.map((v) => `<td>${esc(v)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`)
+      .join(""),
+    md: blocks.map((b) => `**${b.head}**\n\n${mdTable(["why-not", "answers"], b.rows)}`).join("\n\n"),
+  };
+};
 const savedQueries = (): Fig => {
   const parts = [...SAVED_QUERIES, ...deliveryQueries(linkFix())].map(({ source, query }) => {
     const r = run(query, { facts: fs, history: hist });
@@ -210,7 +234,7 @@ const sourceCounts = (): Fig => {
   const authored = db.log.filter((tx) => tx.who !== "agent:halter");
   const by = (s: string) => db.log.filter((tx) => tx.source === s).length;
   const rows = [
-    ["asked", String(by("asked")), "they told us: the role survey import, profile answers, and replies to emails, the why-didnt-you-buy survey among them"],
+    ["asked", String(by("asked")), "they told us: clicks on the spring note's role links, profile answers, and replies to emails, the why-didnt-you-buy survey among them"],
     ["observed", String(by("observed")), `they did it: purchases and finished courses, plus ${db.log.length - authored.length} path events by agent:halter`],
     ["inferred", String(by("inferred")), "a rule worked it out: roles guessed from the signup page, rule role-from-signup-page"],
     ["assumed", String(by("assumed")), "someone believes it: every path edit, each quoting a person"],
@@ -295,6 +319,7 @@ const FIGS: Record<string, () => Fig> = {
   },
   "feed-query": () => ({ html: lispHtml(fitSource(FEED)), md: `\`\`\`lisp\n${fitSource(FEED)}\n\`\`\`` }),
   "why-not": () => whyNotFig(),
+  "why-not-wordings": () => wordingsFig(),
   "tx:bridge-move": () => example(db.log.find((x) => x.datoms.some((d) => d.a === "tx/move" && String(d.v).startsWith('(move "small-tools-bridge"')))?.t ?? 0),
   "tx:survey": () => example(db.log.find((x) => x.source === "asked")?.t ?? 0),
   sources: sourceCounts,
@@ -539,9 +564,9 @@ const useCases = (): ReadonlyArray<UseCase> => {
     },
     {
       goal: "Ask people who didn't buy why",
-      say: "The survey is its own path. It enters on `(finished? \"small-tools-bridge\")`, which is true only for people who walked the whole pitch: buyers leave by `exit-on`, and leaving isn't finishing.",
+      say: "The survey is its own path. It enters on `(finished? \"small-tools-bridge\")`, which is true only for people who walked the whole pitch: buyers leave by `exit-on`, and leaving isn't finishing. A survey says what it asks with `:asks`, and it counts as asking why only when that dimension marks `:objections`. Each answer records the delivery it answered, so a reworded question keeps its answers apart.",
       excerpts: [pickForms("why-didnt-you-buy", [[/^ {2}\(enters-on/, Infinity], [/^ {2}\(state ask/, Infinity]], "why-didnt-you-buy")],
-      checks: ["post-close-survey", "trigger-has-evidence", "path-has-target"],
+      checks: ["post-close-survey", "asks-declared", "trigger-has-evidence", "path-has-target"],
       live: ["/paths/why-didnt-you-buy/", "Why didn't you buy?"],
     },
     {
@@ -775,9 +800,9 @@ These aren't part of 0.2. They came up while making the seed run, and they're fo
   - When Mara committed Black Friday on 14 September, nobody was on it yet, so the commit was clean. Gus entered at go-live, one transaction later, and from then \`bonus-to-owner\` was true at run, for him and \`bf-bonus\` only. **Try it.** Drag the slider to 27 November and add \`:bonus "template-pack"\` to \`bf-04\` in the Edit tab: the commit is refused, because Gus is still in the sale with \`bf-04\` ahead of him. A \`:bonus\` the offer doesn't declare is refused by \`bonus-declared\`; add the \`(bonus …)\` to the offer and the refusal clears.
   - The bonus's end is the sale's close, and everyone \`bf-bonus\` reached was told so. Moving the close after Monday morning is refused twice over: once for the close, once for the template-pack bonus.
 - **Two more people were refused at run.** Nobody committed anything; the world changed under a live path.
-  - Jo joined the list on 25 November, and half an hour later \`agent:desk\` guessed she's a writer from what she clicked, by \`:rule "role-from-click"\`. That made \`hard-from-inferred\` true for her and \`bf-02\`. On the 26th halter sent her the \`else\`, the plain \`bf-02\`, because telling her she's a writer from a guess is the harm. Her later sends went out as written.
+  - Jo joined the list on 25 November, and half an hour later \`agent:desk\` guessed she's a writer from what she clicked on the site, by \`:rule "role-from-click"\`. A click on nothing that asks is observed, and a value worked out from it is inferred, so her role has no delivery behind it. That made \`hard-from-inferred\` true for her and \`bf-02\`. On the 26th halter sent her the \`else\`, the plain \`bf-02\`, because telling her she's a writer from a guess is the harm. Her later sends went out as written.
   - Quin is a QA fixture, \`:person/synthetic\`, imported onto the real list on 30 November by mistake. \`synthetic-live\` is true for her and every send, and an \`else\` doesn't help, so her \`bf-06\` was skipped at run: "refused: synthetic-live, Quin is synthetic". Teo moved her to the test list that morning, but she'd already entered. Every send she had was skipped, so she passed.
-  - Everyone else's \`bf-02\` went out as written: Ana, whose role was asked, got the podcaster email.
+  - Everyone else's \`bf-02\` went out as written: Ana, whose role was asked when she clicked "I podcast" in the spring note, got the podcaster email.
   - Each one raised \`refused-at-run\`, which anyone can waive because the world raised it. Both show in Mara's **Since you last looked** feed, and on the page as alarms. The page's verdict still reads Ships: \`hard-from-inferred\` wasn't true when the drafter committed this version, so it acts at run, for Jo only. [bc-gates]
 - **Try it.** At the head, open the Edit tab, change the title, and type your own words, in quotes, in the why box. **Commit** works, though \`hard-from-inferred\` is true for Jo: a commit answers only for the refusals it adds. Press **Break it** instead and the commit is refused by the three it adds.
 
@@ -869,6 +894,8 @@ The sale isn't the result. \`(target (and (bought? "small-tools") (did? "tool-in
     "note: spring-note on 2027-04-01\ntarget: did? shipped-tool, within 720h",
     `The smallest path there is: one state, one send, everyone on the list. When the send goes out, the state has sent its last message, so each person reaches \`done\`.
 
+The note's links read "I write", "I podcast" and the rest, so the send says \`:asks role\`. \`:asks\` is required on a survey and allowed on any send. A click on one of those links is the person telling us: an \`asked\` answer on their delivery of the note. The site exported the clicks on 20 October, and those are the role answers the drafter read for [Black Friday](/paths/bf-2027/).
+
 {{fig:workspace:spring-note}}
 
 ## Fresh evidence
@@ -889,22 +916,28 @@ Even a broadcast is measured on the reader's result: \`(target (did? "shipped-to
     "why-didnt-you-buy",
     "The successor subscribes to the bridge's finished event and asks one question a day later.",
     "Why didn't you buy: a one-question survey path that enters when someone finishes the bridge without buying.",
-    "finished? small-tools-bridge\n  -> ask --24h--> w1 survey\n         --72h--> w2 faq -> done\ntarget: did? shipped-tool, within 720h",
+    "finished? small-tools-bridge\n  -> ask --24h--> w1 survey (asks why-not)\n         --72h--> w2 faq -> done\ntarget: did? shipped-tool, within 720h",
     `This path is how the bridge's hand-off works. The bridge doesn't name it. It enters on \`(finished? "small-tools-bridge")\`, and buyers never reach \`finished\`, so it only hears from people who didn't buy. [dunn-launch]
 
 {{fig:workspace:why-didnt-you-buy}}
 
-The \`post-close-survey\` check passes for the bridge because of this path: the check looks for any path that enters on the bridge finishing and has a survey send.
+The \`post-close-survey\` check passes for the bridge because of this path: the check looks for any path that enters on the bridge finishing and has a survey send whose \`:asks\` dimension marks objections. \`w1\` says \`:asks why-not\`, and \`why-not\` marks two. A survey that asked what people make wouldn't count: it doesn't ask non-buyers why. [dunn-launch]
 
 ## The answers
 
-"Why didn't you buy?" isn't a language feature. It's the copy of \`w1\`, a \`survey\` send, and the replies are \`answered\` acts on \`why-not\`, a dimension Mara declared on 1 June. She marked two of its five values \`:objections\`: "No time and the price are the two we can answer. Not for me, didn't see it and bought elsewhere we just listen to." A reply is \`:source asked\`, because the person told us. Ana and Dee each gave two answers, which \`:many\` allows, and Ben's one reply carried two acts: why he didn't buy, and the tool he shipped.^[A dimension read back from the facts prints its values sorted. The facts keep no order, so sorted is the canonical form.] [stb]
+"Why didn't you buy?" isn't a language feature. It's the copy of \`w1\`, a \`survey\` send that says what it asks with \`:asks why-not\`, and the replies are \`answered\` acts on \`why-not\`, a dimension Mara declared on 1 June. She marked two of its five values \`:objections\`: "No time and the price are the two we can answer. Not for me, didn't see it and bought elsewhere we just listen to." Each answer records the delivery it answered, \`:act/delivery\`, and is \`:source asked\`, because the person told us: a reply, a form and a click on an answer link alike. Dee clicked "No time" in the email and wrote back "I never saw the sale emails". Ana and Dee each gave two answers, which \`:many\` allows, and Ben's one reply carried two acts: why he didn't buy, and the tool he shipped. An answer the dimension doesn't declare is still kept, as \`unknown\` with what they said.^[A dimension read back from the facts prints its values sorted. The facts keep no order, so sorted is the canonical form.] [stb]
 
 {{fig:why-not}}
 
 - **The bridge answers both objections where they count.** \`p1\`, a fix send, has \`:answers (why-not no-time)\`, and \`p2\`, a proof send, has \`:answers (why-not too-expensive)\`, so \`objection-has-fix\` is quiet on [the bridge](/paths/small-tools-bridge/).
 - **This path answers the price only in a faq.** \`w2\` goes out two days after the survey with \`:answers (why-not too-expensive)\`, and nothing here answers \`no-time\`. A faq names an objection without fixing it, so \`objection-has-fix\` alarms for both on this page. [stb]
-- **Try it.** In the Edit tab, change \`w2\` to \`:job proof\` and the price alarm clears. Give it \`:answers ((why-not too-expensive) (why-not no-time))\` and both do. \`:answers (why-not didnt-see-it)\` is refused by \`value-declared\`: Mara didn't mark it, so there's nothing to answer.
+- **Try it.** In the Edit tab, delete \`w1\`'s \`:asks why-not\` and Commit is refused by \`asks-declared\`: a survey says what it asks. Change \`w2\` to \`:job proof\` and the price alarm clears. Give it \`:answers ((why-not too-expensive) (why-not no-time))\` and both do. \`:answers (why-not didnt-see-it)\` is refused by \`value-declared\`: Mara didn't mark it, so there's nothing to answer.
+
+## The reworded question
+
+On 29 November Teo reworded \`w1\`: "Ask it plainer. What stopped you?" Ana and Ben had already got the first wording; Dee got the second. Each delivery records the content version it carried (D33), and each answer records its delivery, so answers to the first wording stay apart from answers to the second. Ben replied on 10 December, after the change, and his answer still counts toward the first wording, because that's the email he got.
+
+{{fig:why-not-wordings}}
 
 ## The target
 

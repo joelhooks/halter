@@ -1,6 +1,6 @@
 // Fernhill School: a fictional brand, seven fake paths, one log.
 // The authored transactions are below. The interpreter adds the path events between them.
-import { asOf, dateMs, diff, facts, kw, msDate, schemaOps, type Db, type EvidenceKind, type Op, type TxInput } from "./db.ts";
+import { asOf, dateMs, diff, facts, kw, msDate, schemaOps, type Db, type EvidenceKind, type Op, type Reply, type TxInput } from "./db.ts";
 import { contentFacts, type Message } from "./content.ts";
 import { allSends, dimFacts, fromFacts, toFacts, type Dimension, type Path, type Send, type Via } from "./model.ts";
 import { interpret } from "./run.ts";
@@ -119,7 +119,7 @@ const c7: Path = {
         send("c7-05", { on: "2027-03-01T17:00Z" }, "fix"),
         send("c7-06", { on: "2027-03-08T17:00Z" }, "urgency", { deadline: "early-bird" }),
         send("c7-07", { on: "2027-03-15T17:00Z" }, "last-call", { deadline: "close" }),
-        send("c7-08", { on: "2027-03-18T17:00Z" }, "survey"),
+        send("c7-08", { on: "2027-03-18T17:00Z" }, "survey", { asks: "why-not" }),
       ],
       tos: [],
     },
@@ -149,7 +149,8 @@ const spring: Path = {
   entersOn: onList,
   since: SINCE,
   holds: [],
-  states: [{ name: "note", sends: [send("spring-note", { on: "2027-04-01T16:00Z" }, "teach")], tos: [] }],
+  // its links read "I write", "I podcast" and the rest, so it asks role (D43)
+  states: [{ name: "note", sends: [send("spring-note", { on: "2027-04-01T16:00Z" }, "teach", { asks: "role" })], tos: [] }],
   target: shipped,
   guard: [],
   pace: { rate: 200 },
@@ -223,7 +224,7 @@ const why: Path = {
   entersOn: { name: "finished?", arg: "small-tools-bridge" },
   holds: [],
   // w2 answers the price, but only as a faq, so objection-has-fix fires here (D42)
-  states: [{ name: "ask", sends: [send("w1", { after: 24 * H }, "survey"), send("w2", { after: 72 * H }, "faq", { answers: [{ dim: "why-not", value: "too-expensive" }] })], tos: [] }],
+  states: [{ name: "ask", sends: [send("w1", { after: 24 * H }, "survey", { asks: "why-not" }), send("w2", { after: 72 * H }, "faq", { answers: [{ dim: "why-not", value: "too-expensive" }] })], tos: [] }],
   target: shipped,
   guard: [],
   pace: { rate: 150 },
@@ -274,7 +275,7 @@ const bf: Path = {
         send("bf-bonus", { on: "2027-11-29T09:00Z" }, "urgency", { deadline: "close", bonus: "template-pack" }),
         send("bf-04", { on: "2027-11-29T17:00Z" }, "urgency", { deadline: "close" }),
         send("bf-05", { on: "2027-11-30T02:00Z" }, "last-call", { deadline: "close" }),
-        send("bf-06", { on: "2027-12-02T17:00Z" }, "survey"),
+        send("bf-06", { on: "2027-12-02T17:00Z" }, "survey", { asks: "why-not" }),
       ],
       tos: [],
     },
@@ -384,6 +385,8 @@ export const messagesFor = (m: Path): Array<Message> => {
 };
 const copy = (who: string, at: string, why: string, m: Path) => tx(who, at, "assumed", why, contentFacts(messagesFor(m)).map((t) => ({ ...t, added: true })));
 
+// Replies to a send (D43): the interpreter finds the delivery each one answers.
+const reply = (person: string, send: string, value: string, how: Reply["how"], at?: string): Reply => ({ person: `person/${person}`, send, value, how, ...(at === undefined ? {} : { at }) });
 // D42: why people didn't buy. Mara marks the two answers a send can answer; the rest are facts to listen to.
 export const WHY_NOT: Dimension = {
   name: "why-not",
@@ -391,7 +394,7 @@ export const WHY_NOT: Dimension = {
   many: true,
   objections: ["no-time", "too-expensive"],
 };
-const whyNot = (p: string, values: ReadonlyArray<string>) => values.flatMap((v) => answered(p, "why-not", v));
+const W1 = "why-didnt-you-buy/w1";
 
 export const AUTHORED: ReadonlyArray<TxInput> = [
   tx("teo", "2027-01-04T17:00Z", "assumed", 'Mara: "Write the shape down before anything goes in it."', schemaOps()),
@@ -440,13 +443,12 @@ export const AUTHORED: ReadonlyArray<TxInput> = [
   tx("mara", "2027-10-01T09:00Z", "assumed", "marked seen", [add("mara", "seen/path", "bf-2027@")]),
   // D36: an agent waives an alarm a person raised, and it counts at once. Mara wrote the fix send.
   tx("agent:judge", "2027-10-05T17:30Z", "inferred", "warm-list: everyone on bf-2027 is on fernhill-news and opened mail from us in the last 90 days", plan(bfC0, bfD0), "warm-list"),
-  tx(
-    "adapter:survey",
-    "2027-10-20T16:00Z",
-    "asked",
-    'Answers to "What do you make?", imported as one transaction.',
-    [...ROLES.map((r) => add("dim/role", "dim/values", kw(r))), ...ASKED.flatMap(([p, r]) => answered(p, "role", r))],
-  ),
+  // D43: the spring note's answer links ("I write", "I podcast", …) were clicked in April; the site exports
+  // the clicks in October. Each is an asked answer on the person's spring-note delivery, from when they clicked.
+  {
+    ...tx("adapter:survey", "2027-10-20T16:00Z", "asked", 'Answers to "What do you make?", imported as one transaction.', ROLES.map((r) => add("dim/role", "dim/values", kw(r)))),
+    replies: ASKED.map(([p, r], i) => reply(p, "spring-note/spring-note", r, "click", `2027-04-0${1 + (i % 3)}T${String(17 + i).padStart(2, "0")}:00Z`)),
+  },
   tx(
     "agent:desk",
     "2027-10-21T16:00Z",
@@ -474,8 +476,17 @@ export const AUTHORED: ReadonlyArray<TxInput> = [
   tx("adapter:shop", "2027-11-23T12:00Z", "observed", 'Shop: "order 2210, Small Tools, Shipped"', bought("cy", "small-tools")),
   tx("mara", "2027-06-01T17:00Z", "assumed", 'Mara: "No time and the price are the two we can answer. Not for me, didn\'t see it and bought elsewhere we just listen to."', dimFacts(WHY_NOT).map((t) => ({ ...t, added: true }))),
   // replies to w1, the survey: asked, because the person told us (D42)
-  tx("adapter:mail", "2027-11-25T08:10Z", "asked", 'Survey reply: "No time this month, and honestly it\'s a lot of money."', whyNot("ana", ["no-time", "too-expensive"])),
-  tx("adapter:mail", "2027-12-02T07:45Z", "asked", 'Survey reply: "Too busy before the holidays, and I never saw the sale emails."', whyNot("dee", ["no-time", "didnt-see-it"])),
+  { ...tx("adapter:mail", "2027-11-25T08:10Z", "asked", 'Survey reply: "No time this month, and honestly it\'s a lot of money."', []), replies: [reply("ana", W1, "no-time", "reply"), reply("ana", W1, "too-expensive", "reply")] },
+  // D43: Teo rewords w1 after Ana's and Ben's surveys went out. Dee gets the new wording; each answer's
+  // delivery records which one it answered.
+  tx("teo", "2027-11-29T10:00Z", "assumed", 'Teo: "Ask it plainer. What stopped you?"', [
+    { e: "message/w1/email", a: "rendition/subject", v: SUBJECT.w1 ?? "w1", added: false },
+    { e: "message/w1/email", a: "rendition/subject", v: "What stopped you?", added: true },
+    { e: "message/w1/email", a: "rendition/body", v: "w1.email", added: false },
+    { e: "message/w1/email", a: "rendition/body", v: "w1-plainer.email", added: true },
+  ]),
+  // one reply clicked an answer link: still asked, because she told us
+  { ...tx("adapter:mail", "2027-12-02T07:45Z", "asked", 'Survey reply: "Too busy before the holidays, and I never saw the sale emails."', []), replies: [reply("dee", W1, "no-time", "click"), reply("dee", W1, "didnt-see-it", "reply")] },
   // D41: Gus bought the template pack on its own in August, so Black Friday's bonus send isn't for him
   tx("adapter:shop", "2027-08-12T11:00Z", "observed", 'Shop: "order 2117, The Fernhill template pack"', bought("gus", "template-pack")),
   tx("adapter:site", "2027-11-20T14:00Z", "observed", SIGNUP, signup("dee", "eli")),
@@ -523,7 +534,7 @@ export const AUTHORED: ReadonlyArray<TxInput> = [
   tx("adapter:site", "2027-12-06T19:00Z", "observed", 'Site: "Small Tools workspace: first tool run"', act("cy", "tool-in-use")),
   tx("adapter:site", "2027-12-09T17:00Z", "observed", 'Site: "Small Tools workspace: first tool run"', act("gus", "tool-in-use")),
   // one reply, two answers: why he didn't buy (D42) and what he did (D28)
-  tx("adapter:mail", "2027-12-10T16:00Z", "asked", 'Reply to "One question": "no budget yet, but I shipped a tool"', [...whyNot("ben", ["too-expensive"]), ...act("ben", "shipped-tool")]),
+  { ...tx("adapter:mail", "2027-12-10T16:00Z", "asked", 'Reply to "One question": "no budget yet, but I shipped a tool"', act("ben", "shipped-tool")), replies: [reply("ben", W1, "too-expensive", "reply")] },
   tx("adapter:site", "2027-12-15T18:00Z", "observed", 'Site: "course completed: Writing for the web"', act("fay", "finished-a-library-course")),
 ];
 

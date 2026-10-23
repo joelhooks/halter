@@ -62,6 +62,12 @@ export const SHAPE = [
   :say "send {?k} has :deadline {?d}. A deadline names close, early-bird or class."
   :at (?s :send/deadline)
   :where ((?s :send/path ?c) (?s :send/key ?k) (?s :send/deadline ?d) (not (in? ?d close early-bird class))))`,
+  `(check "asks-declared" :severity refuse
+  :say "send {?k} {?what}. A survey says what it asks: :asks DIM, with DIM declared."
+  :at ?s
+  :where ((?s :send/path ?c) (?s :send/key ?k)
+          (or (and (?s :send/job survey) (not (?s :send/asks _)) (= ?what "is a survey with no :asks"))
+              (and (?s :send/asks ?d) (not (?d :dim/name _)) (= ?what "asks a dimension that isn't declared")))))`,
   `(check "bonus-declared" :severity refuse
   :say "send {?k} offers bonus {?b}, which {?c}'s offer doesn't declare. Add (bonus \\"{?b}\\" :until close) to the offer, or drop :bonus."
   :at (?s :send/bonus)
@@ -218,13 +224,15 @@ export const DOCTRINE = [
   :at (?s :send/vary-by)
   :where ((?s :send/path ?c) (?s :send/key ?k) (?s :send/vary-by ?d) (?d :dim/name ?dn)
           (count ?n ?v (?d :dim/values ?v)) (> ?n 5)))`,
+  // A survey counts only when the dimension it asks marks objections (D43): asking what people make
+  // doesn't ask non-buyers why.
   `(check "post-close-survey" :severity alarm :cites (dunn-launch)
-  :say "nothing in {?c} or after it asks non-buyers why. Add a survey send, or a path that enters on (finished? \\"{?c}\\")."
+  :say "nothing in {?c} or after it asks non-buyers why. A survey send after close counts when its :asks dimension marks :objections."
   :at ?c
   :where ((?o :offer/path ?c)
-          (not (?s :send/path ?c) (?s :send/job survey))
+          (not (?s :send/path ?c) (?s :send/job survey) (?s :send/asks ?d) (?d :dim/objections _))
           (not (?q :path/enters-on ?e) (?e :pred/name finished?) (?e :pred/arg ?c)
-               (?w :send/path ?q) (?w :send/job survey))))`,
+               (?w :send/path ?q) (?w :send/job survey) (?w :send/asks ?x) (?x :dim/objections _))))`,
   // Per path: each objection of a dimension the path uses needs a fix or proof send that answers it (D42).
   // A path that uses no dimension with objections passes; values nobody marked never alarm.
   `(check "objection-has-fix" :severity alarm :cites (stb)

@@ -212,6 +212,26 @@ await test("answering an objection in a fix send clears it, and answering a non-
   );
 });
 
+// D43: a survey says what it asks.
+const ASKS = "\n      :asks why-not";
+await test("deleting :asks from a survey send is refused by asks-declared, and nothing commits (D43)", () => {
+  const m = at("why-didnt-you-buy", HEAD, { tab: "Edit" });
+  const head = draftText(m);
+  if (!head.includes(ASKS)) throw new Error("w1 has no :asks");
+  scene(
+    program,
+    given(m),
+    type(selector("textarea.lisp-edit"), head.replace(ASKS, "")),
+    type(selector("label.why input"), 'Teo: "Drop the ask line."'),
+    expect(text("send w1 is a survey with no :asks.", { exact: false })).toExist(),
+    click(role("button", { name: "Commit" })),
+    Command.expectNone(),
+    expect(text("Nothing committed: refused: asks-declared:", { exact: false })).toExist(),
+    type(selector("textarea.lisp-edit"), head),
+    expect(text("asks-declared")).not.toExist(),
+  );
+});
+
 console.log(failed === 0 ? `${passed} scenes passed` : `${failed} failed`);
 if (failed) {
   process.exitCode = 1;

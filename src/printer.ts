@@ -42,9 +42,11 @@ const sendNode = (s: Send): Form => {
       ["on", s.on === undefined ? undefined : q(s.on)],
       ["job", s.job],
       ["via", s.via === undefined ? undefined : viaNode(s.via)],
+      // LANGUAGE.md's order: :deadline, :asks, :answers, :bonus
       ["deadline", s.deadline],
-      ["bonus", s.bonus === undefined ? undefined : q(s.bonus)],
+      ["asks", s.asks],
       ["answers", s.answers === undefined ? undefined : answersNode(s.answers)],
+      ["bonus", s.bonus === undefined ? undefined : q(s.bonus)],
     ]),
     v && form("vary", [v.dim, v.hard && ":hard", ...v.cases.map((c) => form(c.value, [q(c.message)])), v.else !== undefined && form("else", [q(v.else)])]),
   ]);

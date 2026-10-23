@@ -98,6 +98,8 @@ export interface Send {
   readonly bonus?: string;
   // the objections it answers, :answers (DIM VALUE) (D42)
   readonly answers?: ReadonlyArray<Answer>;
+  // the dimension it asks for, :asks DIM (D43)
+  readonly asks?: string;
   readonly vary?: Vary;
 }
 export interface To {
@@ -287,6 +289,7 @@ export const toFacts = (m: Path): Array<Triple> => {
       put(e, "send/after", s.after);
       put(e, "send/deadline", s.deadline === undefined ? undefined : kw(s.deadline));
       put(e, "send/bonus", s.bonus);
+      put(e, "send/asks", s.asks === undefined ? undefined : DIM + s.asks);
       (s.answers ?? []).forEach((x, j) => {
         const ae = answersId(c, s.key, j + 1);
         put(ae, "answers/send", e);
@@ -446,6 +449,7 @@ export const fromFacts = (c: string, triples: ReadonlyArray<Triple>): Path | und
         ...opt("job", key(bag, "send/job")),
         ...opt("deadline", key(bag, "send/deadline")),
         ...opt("bonus", str(bag, "send/bonus")),
+        ...opt("asks", strip(str(bag, "send/asks"), DIM)),
         ...(answers.length === 0 ? {} : { answers }),
         ...(dim === undefined ? {} : { vary: { dim, hard: one(bag, "send/vary-hard") === true, cases: vs, ...opt("else", str(bag, "send/vary-else")) } }),
       },
