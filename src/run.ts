@@ -12,7 +12,7 @@ import { MESSAGE, renditionId } from "./content.ts";
 import { deliveryOps } from "./delivery.ts";
 import { deadlineRefusal, eventInstant, type Broken } from "./deadline.ts";
 import { fromFacts, type Path, type Send } from "./model.ts";
-import { answer, holds, people, type World } from "./pred.ts";
+import { answer, holds, latestAnswer, people, type World } from "./pred.ts";
 import { printAction, printPred, printVia, duration } from "./printer.ts";
 
 export const HALTER = "agent:halter";
@@ -78,12 +78,14 @@ export const interpret = (authored: ReadonlyArray<TxInput>, horizon: string, opt
   };
   // Versions: every transaction that changed a path's structure, tracked as authored transactions land.
   const versions = new Map<string, Array<number>>();
-  // Content versions (D33): the last transaction that changed each message, by the same rule as structure.
+  // Content versions (D33), per rendition: the last transaction that changed this channel's rendition of
+  // the message, or the message itself. A fix to the email body leaves the site rendition's version alone.
   const contentAt = new Map<string, number>();
   const track = (tx: Tx) => {
     for (const id of paths().keys()) if (tx.datoms.some((d) => isStructure(id, d))) versions.set(id, [...(versions.get(id) ?? []), tx.t]);
-    for (const d of tx.datoms) if (typeof d.e === "string" && d.e.startsWith(MESSAGE)) contentAt.set(d.e.slice(MESSAGE.length).split("/")[0] ?? "", tx.t);
+    for (const d of tx.datoms) if (typeof d.e === "string" && d.e.startsWith(MESSAGE)) contentAt.set(d.e.slice(MESSAGE.length), tx.t);
   };
+  const contentOf = (message: string, via: string) => Math.max(contentAt.get(message) ?? 0, contentAt.get(`${message}/${via}`) ?? 0);
   // Deliveries already written, by key: a second delivery with the same key only updates its status.
   const delivered = new Map<string, string>();
   // The message a send picks for this person: its vary case for their value, else the else, else its own key.
@@ -110,7 +112,16 @@ export const interpret = (authored: ReadonlyArray<TxInput>, horizon: string, opt
     // A calendar send goes to whoever is in the state at that instant.
     return on === undefined || on < r.stateAt ? undefined : on;
   };
-  const world = (): World => ({
+  // One world per db: the predicates index acts and write times on it, so it's built once per transaction.
+  const worlds = new WeakMap<Db, World>();
+  const world = (): World => {
+    const hit = worlds.get(db);
+    if (hit) return hit;
+    const w = worldOf();
+    worlds.set(db, w);
+    return w;
+  };
+  const worldOf = (): World => ({
     facts: facts(db),
     history: history(db),
     due: (person, path, within) => {
@@ -137,13 +148,11 @@ export const interpret = (authored: ReadonlyArray<TxInput>, horizon: string, opt
     if (ch === "sms") return fact(w, person, "person/phone") === undefined ? "no phone number" : consented(person) ? undefined : "no sms consent";
     return "unknown channel";
   };
-  // A stated channel preference: the person's value on the built-in dimension channel, from an asked transaction.
+  // A stated channel preference: the person's latest answered act on the built-in dimension channel.
+  // Only an asked one picks within (or …).
   const preference = (person: string): { readonly channel: string; readonly asked: boolean } | undefined => {
-    const h = history(db);
-    const d = [...h].reverse().find((x) => x.e === person && x.a === "person/channel");
-    if (!d || !d.added) return undefined;
-    const src = h.find((x) => x.e === d.tx && x.a === "tx/source")?.v;
-    return { channel: d.v instanceof Kw ? d.v.name : String(d.v), asked: (src instanceof Kw ? src.name : String(src ?? "")) === "asked" };
+    const x = latestAnswer(world(), person, "channel");
+    return x?.value === undefined ? undefined : { channel: x.value, asked: x.source === "asked" };
   };
   // :via picks channels. and/one takes every one the person can receive. Inside (or …) the path sets the
   // allowed channels and the person picks: an asked preference wins, else the written order (D24).
@@ -282,8 +291,9 @@ export const interpret = (authored: ReadonlyArray<TxInput>, horizon: string, opt
     }
   };
 
-  // Fresh evidence: enters-on fires on the transaction that makes it true, and only
-  // transactions after the path went live count, unless :since reaches further back.
+  // Fresh evidence (D39): enters-on fires on the transaction that makes it true, counting only acts whose
+  // :act/at is at or after the path went live, unless :since reaches further back. Path events and other
+  // facts count from when they were written, because that is when they happened.
   const liveAt = new Map<string, number>();
   const goLive = (id: string) => {
     let t = liveAt.get(id);
@@ -293,17 +303,6 @@ export const interpret = (authored: ReadonlyArray<TxInput>, horizon: string, opt
       liveAt.set(id, t);
     }
     return t;
-  };
-  const before = new Map<number, World>();
-  const worldBefore = (cutoff: number): World => {
-    let w = before.get(cutoff);
-    if (!w) {
-      const t = [...db.log].reverse().find((x) => (dateMs(x.at) ?? 0) < cutoff)?.t ?? 0;
-      const d = asOf(db, t);
-      w = { facts: facts(d), history: history(d) };
-      before.set(cutoff, w);
-    }
-    return w;
   };
 
   // React to the transaction that just landed, until nothing more changes at this instant.
@@ -329,7 +328,7 @@ export const interpret = (authored: ReadonlyArray<TxInput>, horizon: string, opt
           if (runs.has(`${person}|${p.id}`) || w.facts.some((f) => f.e === person && f.a === "path/entered" && f.v === p.id)) continue;
           if (!holds(p.entersOn, person, w)) continue;
           const cutoff = p.since === undefined ? goLive(p.id) : (dateMs(p.since) ?? 0);
-          if (cutoff > now || holds(p.entersOn, person, worldBefore(cutoff))) continue;
+          if (cutoff > now || !holds(p.entersOn, person, w, cutoff)) continue;
           // They run the structure as of the last change before they entered: their version.
           const version = opts.versions?.(person, p.id, now) ?? latest(p.id);
           const vp = pathOf(p.id, version) ?? p;
@@ -339,10 +338,10 @@ export const interpret = (authored: ReadonlyArray<TxInput>, horizon: string, opt
           if (vp.target) watches.set(`${person}|${p.id}`, { person, path: p.id, enteredAt: now, version, ...(vp.target.within === undefined ? {} : { until: now + vp.target.within }) });
         }
       }
-      // Targets: fresh means true now and not before this person entered this path.
+      // Targets count acts whose :act/at is at or after this person entered this path (D39).
       for (const [k, wa] of [...watches]) {
         const tg = pathOf(wa.path, wa.version)?.target;
-        if (!tg || !holds(tg.pred, wa.person, w) || holds(tg.pred, wa.person, worldBefore(wa.enteredAt))) continue;
+        if (!tg || !holds(tg.pred, wa.person, w, wa.enteredAt)) continue;
         note(wa.path, `${wa.path}: (target ${printPred(tg.pred)}) held`, [add(wa.person, "path/reached-target", wa.path)]);
         watches.delete(k);
       }
@@ -419,7 +418,7 @@ export const interpret = (authored: ReadonlyArray<TxInput>, horizon: string, opt
           const page = ch.use.includes("site") ? fact(w, renditionId(message, "site"), "rendition/page") : undefined;
           const how = `deliver succeeded via ${ch.use.join(" and ")}${ch.passed.length ? ` (${ch.passed.join("; ")})` : ""}`;
           const receipts = ch.use.flatMap((via) => {
-            const ops = deliveryOps((k) => delivered.get(k), { person: r.person, send: ref, message, content: contentAt.get(message) ?? 0, via, status: "sent" });
+            const ops = deliveryOps((k) => delivered.get(k), { person: r.person, send: ref, message, content: contentOf(message, via), via, status: "sent" });
             const e = ops.find((o) => o.a === "delivery/key");
             if (e) delivered.set(String(e.v), String(e.e));
             return ops;

@@ -114,15 +114,12 @@ export const SCHEMA: ReadonlyArray<Attr> = [
   a("lesson/n", "number", "the lesson's number"),
   a("lesson/title", "string", "the lesson's title"),
   a("dim/name", "string", "a dimension people are segmented by"),
-  a("dim/attr", "string", "the person attribute that holds it"),
   a("dim/values", "keyword", "the values it may take", true),
   a("dim/many", "boolean", "true when a person may hold several values"),
   a("person/name", "string", "a fake recipient"),
   a("person/email", "string", "an example.com or example.org address"),
   a("person/lists", "ref", "lists the person is on", true),
   a("person/tags", "string", "tags on the person", true),
-  a("person/role", "keyword", "what they make, asked or inferred"),
-  a("person/channel", "keyword", "the channel they prefer, for the built-in dimension channel; only an asked fact picks within (or …)"),
   a("path/entered", "string", "path event: the person entered this path", true),
   a("path/at", "string", "path event: the PATH/STATE the person is in, one per path; history keeps the trail", true),
   a("path/version", "string", "path event: PATH@TX, the structure version the person runs, one per path; history keeps every version", true),
@@ -133,24 +130,28 @@ export const SCHEMA: ReadonlyArray<Attr> = [
   a("path/exited", "string", "path event: exit-on fired on this path", true),
   a("path/reached-target", "string", "path event: this path's target turned true inside its window", true),
   a("path/missed-target", "string", "path event: this path's target window ended while it was false", true),
-  a("person/did", "string", "an act the person did, like shipped-tool; only observed or asked counts for did?", true),
   a("send/missed", "string", "path event: the send came due during a hold or outage, and its state had already ended", true),
   // Deliveries (D33): each is its own entity, one per person, send and channel, written with the path event.
   a("delivery/person", "ref", "the person the delivery went to"),
   a("delivery/send", "string", "the send in the structure, as PATH/KEY"),
   a("delivery/message", "string", "the message that went out; after a vary, the variant the person got"),
-  a("delivery/content", "number", "the content version: the last transaction that changed the message before it went out"),
+  a("delivery/content", "number", "the content version: the last transaction that changed this channel's rendition before it went out"),
   a("delivery/via", "keyword", "the one channel this delivery used"),
   a("delivery/status", "keyword", "sent when the provider confirmed it, uncertain when it never did"),
   a("delivery/key", "string", "PERSON|PATH/KEY|CHANNEL: one delivery per person, send and channel", false, true),
+  // Acts (D39): each world act is its own entity, and records when it happened, which can differ from when it was written.
+  a("act/person", "ref", "the person who did it"),
+  a("act/kind", "keyword", "bought, finished, did or answered"),
+  a("act/of", "string", "the product, course or act it's about; for answered, the dimension"),
+  a("act/at", "date", "when it happened; freshness reads this, never the transaction"),
+  a("act/source", "keyword", "how we know, from the transaction that first wrote the act; a correction doesn't change it"),
+  a("act/value", "keyword", "an answered act's value; a person's value for the dimension follows their latest answered act"),
   a("log/cursor", "number", "the interpreter has handled every transaction up to this one"),
-  a("person/bought", "ref", "a product the person bought; the tx time is when", true),
   a("person/synthetic", "boolean", "a fake person who only runs in simulations"),
   a("person/phone", "string", "a fictional 555-01xx number; sms also needs consent"),
   a("person/sms-consent", "boolean", "they agreed to texts; only an asked or observed transaction counts"),
   a("person/account", "boolean", "they have a site account, so the site channel can reach them"),
   a("person/access", "string", "path event: a site page or lesson the person can now open", true),
-  a("person/finished", "ref", "a course or path the person finished; the tx time is when", true),
   a("path/title", "string", "a human name"),
   a("path/list", "ref", "the list the path draws from"),
   a("path/enters-on", "ref", "the predicate that lets a person in"),
@@ -319,6 +320,19 @@ export const transact = (db: Db, input: TxInput): Transacted => {
     if (op.a.startsWith("tx/")) return { ok: false, error: `refused: :${op.a} is written by the transaction itself` };
     const bad = typeError(attr, op.v);
     if (bad) return { ok: false, error: `refused: :${op.a} takes ${bad}` };
+    // An act's source is how we first knew it (D39). The transaction that first writes it sets it, and
+    // a later correction that retracts and re-asserts the act must assert the same source.
+    if (op.a === "act/source" && op.added) {
+      const first = db.log.flatMap((x) => x.datoms).find((d) => d.e === op.e && d.a === "act/source" && d.added);
+      const want = first ? first.v : kw(input.source);
+      if (valKey(want) !== valKey(op.v))
+        return {
+          ok: false,
+          error: first
+            ? `refused: :act/source of ${op.e} is ${String(first.v)}, fixed by t=${first.tx}, the transaction that first wrote it; a correction keeps it`
+            : `refused: :act/source of a new act is this transaction's source, ${input.source}`,
+        };
+    }
     const key = slot(op.e, op.a);
     const vals = new Map(state.get(key)?.vals ?? []);
     const vk = valKey(op.v);

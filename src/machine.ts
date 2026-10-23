@@ -19,13 +19,16 @@ const camel = (s: string) => s.replace(/[^a-zA-Z0-9]+(.)/g, (_, c: string) => c.
 const q = JSON.stringify;
 const ms = (n: number) => n.toLocaleString("en-US").replace(/,/g, "_");
 
-// A predicate becomes one call per registered word, combined with && || !.
-export const predTs = (p: Pred, facts = "facts"): string => {
-  if (p.name === "and" || p.name === "or") return `(${(p.kids ?? []).map((k) => predTs(k, facts)).join(p.name === "and" ? " && " : " || ") || "true"})`;
+// A predicate becomes one call per registered word, combined with && || !. With since, each positive
+// word counts only evidence from that instant on (fresh[…]), and a word under ! reads everything (D39).
+export const predTs = (p: Pred, facts = "facts", since?: string): string => {
+  if (p.name === "and" || p.name === "or") return `(${(p.kids ?? []).map((k) => predTs(k, facts, since)).join(p.name === "and" ? " && " : " || ") || "true"})`;
   if (p.name === "not") return `!${predTs(p.kids?.[0] ?? { name: "and", kids: [] }, facts)}`;
   if (!isAtom(p.name)) return "false";
   const args = [p.arg, p.arg2, p.within].flatMap((x) => (x === undefined ? [] : [q(x)]));
-  return `preds[${q(p.name)}](${facts}, person${args.length ? `, ${args.join(", ")}` : ""})`;
+  return since === undefined
+    ? `preds[${q(p.name)}](${facts}, person${args.length ? `, ${args.join(", ")}` : ""})`
+    : `fresh[${q(p.name)}](${facts}, person, ${since}${args.length ? `, ${args.join(", ")}` : ""})`;
 };
 
 export const generateMachine = (m: Path): string => {
@@ -40,15 +43,15 @@ export const generateMachine = (m: Path): string => {
   out.push(`import { setupEffect } from "@xstate/effect";`);
   out.push(`import { types } from "xstate";`);
   out.push(`// reviewed code: the only words the data can name`);
-  out.push(`import { deliver, FactEvent, pace, PathInput, preds, type Facts } from "./halter-registry";`);
+  out.push(`import { deliver, FactEvent, fresh, pace, PathInput, preds, type Facts } from "./halter-registry";`);
   out.push("");
   out.push("interface PathContext {");
   out.push("  readonly person: string;");
   out.push("  readonly outcome: \"done\" | \"exited\" | undefined;");
   if (m.target) {
     out.push("  readonly target: \"reached\" | \"missed\" | undefined;");
-    out.push("  // the facts as of this person's entry: the target only counts facts that came after");
-    out.push("  readonly atEntry: Facts;");
+    out.push("  // when this person entered: the target only counts acts whose :act/at is at or after it");
+    out.push("  readonly enteredAt: number;");
   }
   out.push("}");
   out.push("");
@@ -67,7 +70,7 @@ export const generateMachine = (m: Path): string => {
   push(1, "schemas: { context: types<PathContext>(), input: PathInput, events: FactEvent },");
   out.push("}).createMachine({");
   push(1, `id: ${q(id)},`);
-  push(1, `context: ({ input }) => ({ person: input.person, outcome: undefined${m.target ? ", target: undefined, atEntry: input.facts" : ""} }),`);
+  push(1, `context: ({ input }) => ({ person: input.person, outcome: undefined${m.target ? ", target: undefined, enteredAt: input.at" : ""} }),`);
   push(1, "// the interpreter reads this when the actor stops, and writes the lifecycle transaction");
   push(1, `output: ({ context }) => ({ person: context.person, path: ${q(id)}, outcome: context.outcome${m.target ? ", target: context.target" : ""} }),`);
   if (m.target) {
@@ -166,8 +169,8 @@ export const generateMachine = (m: Path): string => {
     push(5, "on: {");
     push(6, "fact: ({ context, event: { facts } }) => {");
     push(7, "const person = context.person;");
-    push(7, "// fresh: true now, and not as of entry");
-    push(7, `return ${predTs(tg.pred)} && !${predTs(tg.pred, "context.atEntry")}`);
+    push(7, "// fresh: acts that happened at or after entry, by :act/at (D39)");
+    push(7, `return ${predTs(tg.pred, "facts", "context.enteredAt")}`);
     push(8, `? { target: "reached", context: { ...context, target: "reached" } }`);
     push(8, ": undefined;");
     push(6, "},");

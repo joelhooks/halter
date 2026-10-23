@@ -352,7 +352,7 @@ prop("no sequence of edits without moves changes the path events of anyone alrea
   );
 });
 
-prop("every send/sent has a sent delivery behind it, and every delivery's content tx is at or before its own", () => {
+prop("every send/sent has a sent delivery behind it, and every delivery's content tx is its rendition's last change before it", () => {
   // random content edits dropped into the seed, after every message exists. p1 is left out: Teo's own fix
   // retracts the exact body it replaces, and a random edit before it would leave nothing to retract.
   const MSGS = ["p2", "p3", "b1", "bf-02", "bf-03", "day-1"];
@@ -374,9 +374,11 @@ prop("every send/sent has a sent delivery behind it, and every delivery's conten
       const written = new Map<string, number>();
       for (const tx of d.log) for (const x of tx.datoms) if (x.a === "delivery/key" && x.added) written.set(String(x.e), tx.t);
       for (const x of ds) ok(x.content <= (written.get(x.id) ?? -1), `${x.id}: content ${x.content} after its tx ${written.get(x.id)}`);
-      // and the content tx really is the last change to that message before the delivery
+      // and the content tx really is the last change to that channel's rendition, or the message, before
+      // the delivery: an edit to one rendition leaves the other channels' versions alone
       for (const x of ds) {
-        const last = d.log.filter((tx) => tx.t < (written.get(x.id) ?? 0) && tx.datoms.some((y) => typeof y.e === "string" && y.e.startsWith(`message/${x.message}/`))).at(-1)?.t ?? 0;
+        const mine = (e: unknown) => e === `message/${x.message}` || e === `message/${x.message}/${x.via}`;
+        const last = d.log.filter((tx) => tx.t < (written.get(x.id) ?? 0) && tx.datoms.some((y) => mine(y.e))).at(-1)?.t ?? 0;
         deepStrictEqual(x.content, last, x.id);
       }
     }),
@@ -651,6 +653,78 @@ prop("a broken path refuses with the line that's wrong", () => {
   const v = verdict(src, ctx);
   const f = v.findings.find((x) => x.check === "early-bird-inside-doors");
   ok(!v.ok && f !== undefined && src.split("\n")[f.line - 1]?.includes("2027-03-20T23:00Z"));
+});
+
+
+// D39: freshness reads :act/at. However many transactions touch a person's acts (first writes, cleanups
+// that retract and re-assert, retractions, corrections to another old instant, unrelated tags), enters-on
+// never enters them while every act that matches happened before go-live, or before :since.
+prop("enters-on never enters someone whose only matching acts happened before go-live or :since", () => {
+  const MIN = 60_000;
+  const iso = (ms: number) => `${new Date(ms).toISOString().slice(0, 16)}Z`;
+  const T = (x: string) => dateMs(x) ?? 0;
+  const bridge = fromFacts("small-tools-bridge", facts(seedDb()));
+  if (!bridge) throw new Error("no bridge");
+  const { since: _since, ...plain } = bridge;
+  const finishers = (since: string): TxInput => ({
+    who: "mara",
+    at: "2027-07-01T09:00Z",
+    source: "assumed",
+    why: 'Mara: "Everyone who finished since then."',
+    ops: toFacts({ ...plain, id: "old-finishers", title: "Old finishers", waives: [], holds: [], since }).map((t) => ({ ...t, added: true })),
+  });
+  const actOps = (e: string, at: string, added = true): Array<Op> => [
+    { e, a: "act/person", v: "person/kit", added },
+    { e, a: "act/kind", v: Kw.of("finished"), added },
+    { e, a: "act/of", v: "five-day-tools", added },
+    { e, a: "act/at", v: at, added },
+    { e, a: "act/source", v: Kw.of("observed"), added },
+  ];
+  const step = fc.record({ kind: fc.constantFrom("write", "cleanup", "retract", "fix-at", "tag"), act: fc.integer({ min: 1, max: 2 }), gap: fc.integer({ min: 1, max: 60 * 24 * 25 }), old: fc.integer({ min: 0, max: 1_000_000 }) });
+  const scenario = fc.record({
+    since: fc.option(fc.integer({ min: 0, max: 60 * 24 * 500 }), { nil: undefined }),
+    steps: fc.array(step, { minLength: 1, maxLength: 8 }),
+  });
+  fc.assert(
+    fc.property(scenario, ({ since, steps }) => {
+      // the cutoff: go-live, or a :since somewhere in 2026 and early 2027; every act happened before it
+      const sinceAt = since === undefined ? undefined : iso(T("2026-01-01T00:00Z") + since * MIN);
+      const cutoff = sinceAt === undefined ? T("2027-06-02T18:00Z") : T(sinceAt);
+      const oldAt = (n: number) => iso(cutoff - (1 + (n % (60 * 24 * 400))) * MIN);
+      const inputs: Array<TxInput> = [
+        { who: "adapter:site", at: "2027-06-03T09:00Z", source: "observed", why: 'Site: "account made"', ops: [{ e: "person/kit", a: "person/name", v: "Kit Vale", added: true }, { e: "person/kit", a: "person/email", v: "kit@example.org", added: true }] },
+        ...(sinceAt === undefined ? [] : [finishers(sinceAt)]),
+      ];
+      const at = new Map<string, string>();
+      // each step after the last, in the order written
+      let clock = T("2027-06-04T00:00Z");
+      steps.forEach((x, i) => {
+        const e = `act/kit-${i === 0 ? 1 : x.act}`;
+        clock += x.gap * MIN;
+        const when = iso(clock);
+        const now = at.get(e);
+        const kind = i === 0 ? "write" : x.kind;
+        const put = (why: string, source: TxInput["source"], ops: Array<Op>) => inputs.push({ who: source === "observed" ? "adapter:import" : "teo", at: when, source, why, ops });
+        if (kind === "write" && now === undefined) {
+          const a = oldAt(x.old);
+          at.set(e, a);
+          put('Old platform: "a completion"', "observed", actOps(e, a));
+        } else if (kind === "cleanup" && now !== undefined) put('Teo: "Re-save it."', "assumed", [...actOps(e, now, false), ...actOps(e, now)]);
+        else if (kind === "retract" && now !== undefined) {
+          at.delete(e);
+          put('Teo: "That completion was a mistake."', "assumed", actOps(e, now, false));
+        } else if (kind === "fix-at" && now !== undefined && oldAt(x.old) !== now) {
+          const a = oldAt(x.old);
+          at.set(e, a);
+          put('Teo: "The export had the wrong day."', "assumed", [{ e, a: "act/at", v: now, added: false }, { e, a: "act/at", v: a, added: true }]);
+        } else if (kind === "tag") put('Site: "clicked a link"', "observed", [{ e: "person/kit", a: "person/tags", v: `clicked-${i}`, added: true }]);
+      });
+      const d = interpret([...AUTHORED, ...inputs], "2028-01-01T00:00Z");
+      const entered = history(d).filter((x) => x.e === "person/kit" && x.a === "path/entered" && x.added).map((x) => String(x.v));
+      deepStrictEqual(entered, [], `${sinceAt ?? "go-live"}: ${inputs.map((x) => `${x.at} ${x.why}`).join(" | ")}`);
+    }),
+    { numRuns: Number(process.env.RUNS ?? 8) },
+  );
 });
 
 console.log(`${count} properties passed`);

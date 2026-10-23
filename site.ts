@@ -254,6 +254,9 @@ const FIGS: Record<string, () => Fig> = {
     return { html: lispHtml(text), md: `\`\`\`lisp\n${text}\n\`\`\`` };
   },
   "tx:link-fix": () => example(linkFix()),
+  // D39: Ben's 2026 completion, imported, and Teo's cleanup that retracts and re-asserts it
+  "tx:act-import": () => example(db.log.find((x) => x.who === "adapter:import")?.t ?? 0),
+  "tx:act-cleanup": () => example(db.log.find((x) => x.who === "teo" && x.why.startsWith('Teo: "Re-save'))?.t ?? 0),
   // D38: the drafter's attempt to push Black Friday's close back, printed, and the interpreter's refusal
   "deadline-attempt": () => {
     const attempt = closeShift(db, { hours: 48 });
@@ -671,13 +674,10 @@ These aren't part of 0.2. They came up while making the seed run, and they're fo
 - **The last assert decides who waived.** If whoever raised an alarm asserts a waiver someone else already confirmed, the waiver becomes theirs and goes pending, so the alarm comes back on. That errs toward the alarm. Undoing a confirmation in the sketch's editor retracts the waiver, rather than returning it to pending.
 - **An alarm on the whole path has no author.** \`no-self-waiver\` reads who wrote the facts a finding's \`:at\` points at. \`post-close-survey\` points at the path itself, which names no single fact, so the sketch lets anyone waive it, as it does \`uncertain-sends\` and \`people-on-old-version\`. Whether the path's author raised an alarm about something missing is open.
 - **A quote can't prove whose words it is.** A valid why holds words in quotes, or is \`:source inferred\` with a \`:rule\`. The sketch checks that the quote is there, not that the author said it.
-- **Fresh targets are judged by comparison.** The sketch's interpreter calls a target fresh when it's true now and was false as of the person's entry. That's right for facts that only get added. An act retracted and asserted again after entry would count as fresh, and 0.2 doesn't say whether it should.
 - **Targets outlast the walk, so the log does too.** The longest window is \`:within 2400h\`, so the seed runs to 1 February 2028 for every window to close. A live system never closes the log; it just keeps watching.
 - **Deferred sends pile up.** Ben left the bridge on 26 November and got two deferred Black Friday sends in the same minute. The no-pile-ups rule covers holds; it should cover defers too.
 - **Old versions count toward the verdict.** Checks run on every version someone is still on, and a refusal on an old version counts as a refusal. That fails closed, but it means fixing a path for new entrants still shows Refused until the people on the old version are moved.
 - **The editor forks the log.** The editor edits as of the slider. Committing sets aside the seed transactions after that point and runs the interpreter on from the edit, so its path events follow.
-- **Content versions are per message, not per channel.** Teo's fix changed only \`p1\`'s email, but Ivy's site delivery of \`p1\` also records it as its content version, because the rule reads the last transaction that changed the message. The copy printed is still right; only the version number is coarser than it could be.
-- **Nothing in the seed is uncertain.** Every deliver in the sketch succeeds, so \`uncertain-sends\` only fires in its test. A provider adapter would write \`:delivery/status uncertain\` and later update the same delivery.
 - **Shape checks and cites.** The pack gives \`else-on-every-vary\` a source,[dunn-survey] but shape checks carry no cite. The sketch keeps it.`,
   },
   pathPage(
@@ -700,7 +700,7 @@ These aren't part of 0.2. They came up while making the seed run, and they're fo
 
 \`(target (and (bought? "fieldkit-c7") (did? "used-the-kit")) :within 2160h)\`. A sale is our result. Using the kit in the field is theirs, so that's what the cohort is measured on. [hulick]
 
-- **Ben reached it after he left.** He bought on 4 March and \`exit-on\` took him out, but the target kept watching. The class log saw him run the week-1 field exercise on 29 March, an observed \`[p :did "used-the-kit"]\`.
+- **Ben reached it after he left.** He bought on 4 March and \`exit-on\` took him out, but the target kept watching. The class log saw him run the week-1 field exercise on 29 March, an observed \`did\` act, \`"used-the-kit"\`.
 - **Hal bought and missed.** He bought on 10 March and never used the kit, so his window ran out in April with \`:path/missed-target\`.
 - **Six finished but missed.** They saw every send and didn't buy. That's the honest failure, counted beside the sales rather than hidden by them.`,
     ["offer event", "waiver", "exit-on", "target"],
@@ -759,10 +759,11 @@ These aren't part of 0.2. They came up while making the seed run, and they're fo
 - **Everyone else took it in November.** Ana, Ben, Cy, Dee and Eli each got five lessons, one a day, and each lesson wrote a \`:person/access\` fact for its page.
 - **The site needs an account.** Signing up makes one. Someone without an account would get the email half of each send only, because \`and\` uses every channel the person can receive.
 - **Ivy came in from the site.** She signed up on 18 November without joining the newsletter, so the course reached her and the list's launches didn't.
+- **One email was never confirmed.** Ana's day-5 email went out at 16:00 on 17 November, five hours before Teo held the bridge for the provider outage. The provider never sent a receipt, so the mail adapter marked that delivery \`uncertain\`, and \`uncertain-sends\` alarms on this page. Nothing retried it. A second email can't be unsent, so someone checks the provider first, and the result updates the same delivery. Her day-5 lesson still unlocked on the site, so she finished. [pu]
 
 ## The target
 
-Finishing is \`:path/finished\`. The point is a shipped tool: \`(target (did? "shipped-tool") :within 504h)\`. Day 5 asks for a link, and a reply lands as \`[p :did "shipped-tool"]\` with \`:source asked\`.
+Finishing is \`:path/finished\`. The point is a shipped tool: \`(target (did? "shipped-tool") :within 504h)\`. Day 5 asks for a link, and a reply lands as a \`did\` act, \`"shipped-tool"\`, with \`:act/source asked\`.
 
 - **Ana, Cy and Eli** shipped inside the three weeks.
 - **Ben, Dee, Gus and Ivy finished but missed.** They read all five days and shipped nothing in time. That's the honest failure, and it's the number the course should be judged on.^[Ben did ship on 10 December, three days after his window closed. [Why didn't you buy?](/paths/why-didnt-you-buy/) entered him later, so it counts that one.]`,
@@ -787,7 +788,9 @@ The printout has two files. **Structure** is the path: states, timing, triggers 
 ## What happened
 
 - **Four days of pitch, for whoever comes next.** The bridge went live with three days of pitch. On 21 November Mara gave it four. Structure is fixed at entry, so that edit made a new version for new entrants, and Ana, Ben and Cy, who were already on the bridge, kept three days. \`people-on-old-version\` alarmed. On the 22nd Mara moved them, in her own words: "Ana is halfway through her pitch, and three days felt rushed." Each kept their state and the instant they entered it, so Ana's last call went out at 90 hours instead of 66. Drag the slider across 21 and 22 November to see the alarm come on and clear. [pu] [bc-gates]
-- **Gus stayed out.** He finished the course in May, before the bridge went live on 2 June. Fresh evidence means only facts after go-live count, so launching the bridge didn't pitch everyone who ever finished. [pu]
+- **Gus stayed out, and so did Ben's old completion.** Gus finished the course in May, before the bridge went live on 2 June. Ben finished it on the old course platform in September 2026, and an import wrote that act in January with its \`:act/at\`. Fresh evidence counts acts whose \`:act/at\` is after go-live, so launching the bridge didn't pitch everyone who ever finished. [pu]
+  - On 15 November Teo's cleanup retracted and re-asserted Ben's old act. That's a new transaction, but the cleanup kept Ben's act/at, so the act stayed old and the bridge didn't enter him.
+  - Ben entered on 20 November, when he finished the five days again on the site. That's the course path writing \`:path/finished\` as it happened. See [Acts](/facts/#acts).
 - **The hold made a miss.** Teo held the bridge during a provider outage. Ana's \`b1\` came due during the hold, and her bridge state ended before the hold did, so it's written as \`:send/missed\`, not sent late. Her \`p1\` went out when the hold ended. [pu]
 - **The person picks the channel.** \`p3\` is \`:via (or sms email)\`: the path allows two channels, and the person picks between them. [rk] [dunn-rm]
   - Ana gave a phone number but never said yes to texts, so sms was out and email was the first channel she could receive. Missing consent is a hard stop, because a text can't be unsent.
@@ -796,7 +799,7 @@ The printout has two files. **Structure** is the path: states, timing, triggers 
   - "Where people are" shows the channel each person last got, read from their delivery's \`:delivery/via\`, and why that channel, from the transaction.
 - **The pitch opened a page.** \`p1\` is \`:via (and site email)\`, so it went both ways: an email, and a \`:person/access\` fact for \`small-tools/welcome\`, read from the content as it was when the send went out.
 - **Teo waived Mara's alarm.** Mara wrote the bridge's sends, and a pitch right after a course has no teach sends before it, so she raised \`teach-before-fix\`. Nobody waives their own alarm, so Teo waived it, in his own words: the five days are the warmup.
-- **Teo fixed a link mid-run.** The workspace link in \`p1\`'s email was broken, and Teo pointed it at a fixed body on 23 November. Ana, Ben and Cy had already got \`p1\`; Ivy and Dee got it after. **What they got** below prints each person's copy as of their delivery's content version, so Ana's still shows the broken body and Ivy's the fixed one. Click a name under Where people are to open theirs.
+- **Teo fixed a link mid-run.** The workspace link in \`p1\`'s email was broken, and Teo pointed it at a fixed body on 23 November. Ana, Ben and Cy had already got \`p1\`; Ivy and Dee got it after. **What they got** below prints each person's copy as of their delivery's content version, so Ana's still shows the broken body and Ivy's the fixed one. Click a name under Where people are to open theirs. The fix changed only the email rendition, so Ivy's and Dee's site deliveries of \`p1\` keep the site rendition's version.
 - **Cy bought and left.** \`exit-on\` wrote \`exited\`, so the successor, which listens for \`finished\`, never saw him. [Small Tools: get your first tool in use](/paths/small-tools-start/) enters on the same \`(bought? "small-tools")\` fact, so it picked him up. [dunn-bridge]
 - **Eli passed the bridge.** He owns the library, so the guard skipped all four sends, and nothing went out. Reaching \`done\` with no sent delivery writes \`:path/passed\`, not \`:path/finished\`, so [Why didn't you buy?](/paths/why-didnt-you-buy/), which enters on \`(finished? "small-tools-bridge")\`, never asks him about a pitch he never got. A path that wants him can enter on \`(passed? "small-tools-bridge")\`.
 - **Ana missed one send during a hold.** Her \`b1\` came due during Teo's hold and her bridge state ended first, so it was \`:send/missed\`. She still got \`p1\` to \`p3\`, so she finished. Only a person with no sent delivery at all passes.
@@ -852,7 +855,7 @@ The survey isn't the target; the answers are ours to learn from. A non-buyer's r
 
 - **Ben reached it.** His reply to the one question said he'd shipped a tool.
 - **Eli was never asked.** He passed the bridge, because nothing went out to him, and this path enters on \`finished?\`. He still shipped on 1 December; no path here claims it.
-- **Ana missed, and the rule is why.** She shipped on 17 November, before she entered this path. Fresh means facts transacted after this person entered this path, so her old reply doesn't count here.^[It did count for [the course](/paths/five-day-tools/), which she was on at the time.] [pu]
+- **Ana missed, and the rule is why.** She shipped on 17 November, before she entered this path. Fresh means acts whose \`:act/at\` is after this person entered this path, so her old reply doesn't count here.^[It did count for [the course](/paths/five-day-tools/), which she was on at the time.] [pu]
 - **Dee finished but missed.**`,
     ["enters-on", "check", "target"],
     ["dunn-launch", "pu"],
@@ -871,6 +874,7 @@ The survey isn't the target; the answers are ours to learn from. A non-buyer's r
 \`(target (did? "tool-in-use") :within 1440h)\` is the bridge's target, with the purchase already given. \`exit-on\` reads the same fact, so reaching it also stops the sends. [hulick]
 
 - **Gus got there mid-path.** He bought on 5 December and his first tool ran on the 9th, before \`s3\`. \`exit-on\` stopped the last send, and the target recorded the win.
+  - It was his second purchase. He first bought on 20 September, before this path went live, and the refund four days later retracted that act. The December purchase is a new act with its own \`:act/at\`, so it was fresh, and this path picked him up. [pu]
 - **Cy got there after the path ended.** He had all three sends, reached \`done\`, and his tool ran on 6 December. The target watches after \`done\`.
 - **Ivy finished but missed.** Three support notes, and no tool in use when her window closed in January.`,
     ["support", "target", "exit-on"],
@@ -941,15 +945,32 @@ Each delivery is its own entity, written in the same transaction as the \`:send/
 
 {{fig:delivery}}
 
-\`:delivery/content\` is the content version: the last transaction that changed that message before it went out, the same rule as a path's version. Teo fixed a broken link in \`p1\`'s email in the middle of the run:
+\`:delivery/content\` is the content version: the last transaction that changed that channel's rendition of the message before it went out, the same rule as a path's version. Teo fixed a broken link in \`p1\`'s email in the middle of the run:
 
 {{fig:tx:link-fix}}
 
-Ana, Ben and Cy had already got \`p1\`, so their deliveries still read the copy with the broken link. Ivy and Dee got it after the fix. Each path page's **What they got** panel prints each delivery as of its content version, and \`got-broken-link\` below asks the log directly. The channel a send used is a fact now too: \`got-texts\` finds Dee's last call. A delivery the provider never confirms has \`:delivery/status uncertain\`, and \`uncertain-sends\` alarms on it. [pu]
+Ana, Ben and Cy had already got \`p1\`, so their deliveries still read the copy with the broken link. Ivy and Dee got it after the fix. The fix changed only the email, so their site deliveries keep the site rendition's version. Each path page's **What they got** panel prints each delivery as of its content version, and \`got-broken-link\` below asks the log directly. The channel a send used is a fact now too: \`got-texts\` finds Dee's last call. A delivery the provider never confirms has \`:delivery/status uncertain\`, and \`uncertain-sends\` alarms on it. Ana's day-5 email on [the course](/paths/five-day-tools/) is one, and nothing retried it. [pu]
+
+## Acts
+
+Buying, finishing a course, doing something and answering a question are acts. Each act is its own entity, and \`:act/at\` says when it happened, which can differ from when it was written (D39). Ben finished the five days on the old course platform in September 2026. An import wrote it in January 2027, with the instant it happened:
+
+{{fig:tx:act-import}}
+
+On 15 November Teo re-saved the imported completions. His cleanup retracts and re-asserts every fact of the act:
+
+{{fig:tx:act-cleanup}}
+
+Freshness reads \`:act/at\`, never the transaction. The cleanup kept Ben's act/at in 2026, so the bridge, live since June, didn't pitch him for it. \`:act/source\` is how we first knew. The transaction that first wrote the act fixes it, so Teo's cleanup is \`:source assumed\` and the act still says \`observed\`. [pu]
+
+- **A real repeat is a new act.** Gus bought Small Tools on 20 September, and the refund four days later retracted the purchase. His December purchase is a new act with its own \`:act/at\`, so it was fresh.
+- **Something recorded late stays old.** An act that happened before a path went live but was written after doesn't count for it. That's the right side to err on.
+- **Answers are acts too.** A person's value for a dimension follows their latest \`answered\` act. The survey's roles, the desk's guesses for Fay and Gus, and Ben's and Dee's channels are all answered acts. An inferred one trips \`hard-from-inferred\` on a \`:hard\` vary, and never picks a channel.
+- **Path events aren't acts.** The interpreter writes \`:path/finished\` and the rest once, at the moment they happen, so their transaction time is their time.
 
 ## Time as facts
 
-halter reads no clock.^[The runtime supplies now through Effect's Clock, and TestClock in a simulation. This page supplies it through the as-of slider on each path page.] A person's entry is the time of the transaction that made \`enters-on\` true. Calendar instants live in offers and \`:on\` sends. Windows are computed from opens, closes and now, never stored as expired. [rk]
+halter reads no clock.^[The runtime supplies now through Effect's Clock, and TestClock in a simulation. This page supplies it through the as-of slider on each path page.] A person's entry is the time of the transaction that made \`enters-on\` true, and acts carry when they happened in \`:act/at\`. Calendar instants live in offers and \`:on\` sends. Windows are computed from opens, closes and now, never stored as expired. [rk]
 
 ## Saved queries
 

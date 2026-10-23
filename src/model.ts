@@ -46,16 +46,16 @@ export const ATOMS = {
   "on-list?": { args: ["str"], doc: "the person is on the list" },
   "tag?": { args: ["str"], doc: "the person has the tag" },
   "domain?": { args: ["str"], doc: "their email is at that domain" },
-  "finished?": { args: ["str"], doc: "they finished that course, or that path wrote :path/finished for them" },
+  "finished?": { args: ["str"], doc: "a finished act for that course exists, or that path wrote :path/finished for them" },
   "exited?": { args: ["str"], doc: "that path wrote :path/exited for them" },
   "passed?": { args: ["str"], doc: "that path wrote :path/passed for them: they reached done and nothing went out" },
   "reached?": { args: ["str", "sym"], doc: "they have ever entered that state of that path" },
-  "bought?": { args: ["str"], doc: "a purchase fact exists" },
-  "answered?": { args: ["sym", "sym"], doc: "their value for the dimension is that value" },
+  "bought?": { args: ["str"], doc: "a bought act for that product exists" },
+  "answered?": { args: ["sym", "sym"], doc: "their latest answered act for the dimension has that value" },
   "known?": { args: ["sym"], doc: "their value for the dimension isn't unknown" },
   "in?": { args: ["str", "sym?"], doc: "they're in that path now, or in that state of it" },
   "due?": { args: ["str", "dur"], doc: "a send from that path is due to them within the duration" },
-  "did?": { args: ["str"], doc: "a [p :did ACT] fact exists from an observed or asked transaction; an inferred act doesn't count" },
+  "did?": { args: ["str"], doc: "a did act exists with :act/source observed or asked; an inferred act doesn't count" },
   "reached-target?": { args: ["str"], doc: "that path wrote :path/reached-target for them" },
   "missed-target?": { args: ["str"], doc: "that path wrote :path/missed-target for them" },
 } as const satisfies Record<string, { args: ReadonlyArray<string>; doc: string }>;
@@ -138,7 +138,7 @@ export interface Path {
   readonly list: string;
   readonly offer?: Offer;
   readonly entersOn?: Pred;
-  // fresh evidence: by default only facts transacted after the path went live count; :since reaches back
+  // fresh evidence (D39): by default only acts whose :act/at is after the path went live count; :since reaches back
   readonly since?: string;
   readonly holds: ReadonlyArray<string>;
   readonly states: ReadonlyArray<State>;

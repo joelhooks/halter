@@ -7,7 +7,7 @@ export interface Delivery {
   // PATH/KEY
   readonly send: string;
   readonly message: string;
-  // the last transaction that changed the message before it went out
+  // the last transaction that changed this channel's rendition of the message before it went out
   readonly content: number;
   readonly via: string;
   readonly status: "sent" | "uncertain";

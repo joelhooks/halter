@@ -12,6 +12,21 @@ import { RunInterpreter, ScrollToDelivery, ScrollToHere, update } from "./update
 import { view } from "./view.ts";
 
 const db = seedDb();
+
+// Moments in the seed, looked up by what happened, so new seed transactions don't renumber the tests.
+const tOf = (who: string, at: string) => {
+  const x = db.log.find((tx) => tx.who === who && tx.at === at);
+  if (!x) throw new Error(`no transaction by ${who} at ${at}`);
+  return x.t;
+};
+const HEAD = db.log.at(-1)?.t ?? 0;
+// Mara's own waiver on the cohort, and agent:drafter's on Black Friday (D36)
+const C7_SELF = tOf("mara", "2027-02-10T18:20Z");
+const DRAFTER_SELF = tOf("agent:drafter", "2027-10-22T16:00Z");
+// the bridge just after Mara's move and its rebase
+const BRIDGE_MID = tOf("mara", "2027-11-22T10:00Z") + 2;
+// two transactions after Black Friday's last call went out
+const AFTER_LAST_CALL = (db.log.filter((tx) => tx.at <= "2027-11-30T02:00Z").at(-1)?.t ?? 0) + 2;
 const program = { update, view };
 const at = (pathId: string, t: number, rest: Partial<Model> = {}): Model => ({ ...initModel({ pathId, db, authored: AUTHORED }), t, ...rest });
 
@@ -39,13 +54,13 @@ const interpreted = (model: Model, messages: ReadonlyArray<Message>): Promise<Me
 };
 
 await test("the slider replays the log", () => {
-  scene(program, given(at("bf-2027", 220)), expect(text("t=220")).toExist(), type(selector("input.slider"), "84"), expect(text("t=84")).toExist(), expect(text("2027-10-22T16:00Z")).toExist());
+  scene(program, given(at("bf-2027", HEAD)), expect(text(`t=${HEAD}`)).toExist(), type(selector("input.slider"), String(DRAFTER_SELF)), expect(text(`t=${DRAFTER_SELF}`)).toExist(), expect(text("2027-10-22T16:00Z")).toExist());
 });
 
 await test("tabs switch the panel, and History scrolls to the slider's transaction", () => {
   scene(
     program,
-    given(at("small-tools-bridge", 125)),
+    given(at("small-tools-bridge", BRIDGE_MID)),
     expect(role("button", { name: "Printout" })).toHaveAttr("aria-pressed", "true"),
     click(role("button", { name: "History" })),
     Command.expectExact(ScrollToHere()),
@@ -58,7 +73,7 @@ await test("tabs switch the panel, and History scrolls to the slider's transacti
 await test("a name under Where people are opens what they got", () => {
   scene(
     program,
-    given(at("small-tools-bridge", 125)),
+    given(at("small-tools-bridge", BRIDGE_MID)),
     click(role("button", { name: "Ana Birch" })),
     Command.expectExact(ScrollToDelivery({ anchor: "got-small-tools-bridge-ana" })),
     Command.resolve(ScrollToDelivery, Message.CompletedScrollToDelivery()),
@@ -71,7 +86,7 @@ await test("a name under Where people are opens what they got", () => {
 await test("nobody confirms a waiver of their own alarm (D36)", () => {
   scene(
     program,
-    given(at("fieldkit-c7", 17, { tab: "Edit" })),
+    given(at("fieldkit-c7", C7_SELF, { tab: "Edit" })),
     type(selector("label.why input"), 'Mara: "ok"'),
     expect(role("button", { name: "Confirm as Mara" })).toHaveAttr("aria-disabled", "true"),
     expect(role("button", { name: "Confirm as Mara" })).toHaveAttr("title", SELF_WAIVE),
@@ -80,7 +95,7 @@ await test("nobody confirms a waiver of their own alarm (D36)", () => {
 
 await test("confirming someone else's pending waiver commits it (D36)", async () => {
   const why = 'Mara: "Fine, keep the variants."';
-  const m = at("bf-2027", 84, { tab: "Edit" });
+  const m = at("bf-2027", DRAFTER_SELF, { tab: "Edit" });
   const result = await interpreted(m, [Message.UpdatedWhy({ value: why }), Message.ClickedConfirmWaiver({ check: "few-values" })]);
   scene(
     program,
@@ -98,7 +113,7 @@ const twoDays = 'Mara: "Give them two more days."';
 const surged = (m: Model) => draftText(m).replace(':closes "2027-11-30T07:59Z"', ':closes "2027-12-02T07:59Z"');
 
 await test("a told deadline is locked: Commit and move everyone is refused and nothing changes (D38)", async () => {
-  const m = at("bf-2027", 178, { tab: "Edit" });
+  const m = at("bf-2027", AFTER_LAST_CALL, { tab: "Edit" });
   const draft = surged(m);
   const result = await interpreted(m, [Message.UpdatedDraft({ text: draft }), Message.UpdatedWhy({ value: twoDays }), Message.ClickedCommit({ kind: "move" })]);
   scene(
@@ -109,7 +124,7 @@ await test("a told deadline is locked: Commit and move everyone is refused and n
     click(role("button", { name: "Commit and move everyone" })),
     Command.resolve(RunInterpreter, result),
     expect(text("Nothing committed: refused: deadline-kept: 4 people were told close is 2027-11-30T07:59Z.", { exact: false })).toExist(),
-    expect(text("t=178")).toExist(),
+    expect(text(`t=${AFTER_LAST_CALL}`)).toExist(),
     expect(selector("input.slider")).toHaveAttr("max", String(db.log.length)),
     expect(role("button", { name: "Commit for new entrants" })).not.toHaveAttr("aria-disabled", "true"),
     expect(role("button", { name: "Commit and move everyone" })).not.toHaveAttr("aria-disabled", "true"),
@@ -117,7 +132,7 @@ await test("a told deadline is locked: Commit and move everyone is refused and n
 });
 
 await test("Commit for new entrants still works after the last call (D38)", async () => {
-  const m = at("bf-2027", 178, { tab: "Edit" });
+  const m = at("bf-2027", AFTER_LAST_CALL, { tab: "Edit" });
   const draft = surged(m);
   const result = await interpreted(m, [Message.UpdatedDraft({ text: draft }), Message.UpdatedWhy({ value: twoDays }), Message.ClickedCommit({ kind: "new" })]);
   scene(
@@ -132,7 +147,7 @@ await test("Commit for new entrants still works after the last call (D38)", asyn
 });
 
 await test("Mark seen moves the cursor and empties the feed (D37)", async () => {
-  const m = at("bf-2027", 220);
+  const m = at("bf-2027", HEAD);
   const result = await interpreted(m, [Message.ClickedMarkSeen()]);
   scene(
     program,
@@ -140,8 +155,8 @@ await test("Mark seen moves the cursor and empties the feed (D37)", async () => 
     expect(text("counts · agent waived an agent's alarm")).toExist(),
     click(role("button", { name: "Mark seen" })),
     Command.resolve(RunInterpreter, result),
-    expect(text("Marked seen at t=221. The feed starts here.")).toExist(),
-    expect(text("Nothing from agents since t=221.")).toExist(),
+    expect(text(`Marked seen at t=${HEAD + 1}. The feed starts here.`)).toExist(),
+    expect(text(`Nothing from agents since t=${HEAD + 1}.`)).toExist(),
   );
 });
 

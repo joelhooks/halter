@@ -11,14 +11,23 @@ const plan = (before: Path | undefined, after: Path): Array<Op> => diff(before ?
 // Commit and move everyone (D32): the edit and (move PATH) land in one transaction, so nobody on the
 // path is left on the old version. A calendar path enters everyone at go-live, so its edits after go-live want this.
 const everyone = (input: TxInput, path: string): TxInput => ({ ...input, moves: [{ path }] });
-const tx = (who: string, at: string, source: EvidenceKind, why: string, ops: Array<Op>, rule?: string): TxInput => ({
-  who,
-  at,
-  source,
-  why,
-  ops,
-  ...(rule === undefined ? {} : { rule }),
-});
+// An act written by a transaction happened at that transaction's instant, and its source is the
+// transaction's (D39), unless the act says otherwise, as an import of old acts does.
+const tx = (who: string, at: string, source: EvidenceKind, why: string, ops: Array<Op>, rule?: string): TxInput => {
+  const fresh = [...new Set(ops.filter((o) => o.a === "act/kind" && o.added).map((o) => String(o.e)))];
+  const fill = fresh.flatMap((e) => [
+    ...(ops.some((o) => o.e === e && o.a === "act/at") ? [] : [add(e, "act/at", at)]),
+    ...(ops.some((o) => o.e === e && o.a === "act/source") ? [] : [add(e, "act/source", kw(source))]),
+  ]);
+  return { who, at, source, why, ops: [...ops, ...fill], ...(rule === undefined ? {} : { rule }) };
+};
+// Acts get ids in the order the seed writes them: act/1, act/2, …
+let actN = 0;
+const newAct = (p: string, kind: string, of: string, extra: ReadonlyArray<readonly [string, Op["v"]]> = []): Array<Op> => {
+  const e = `act/${++actN}`;
+  return [add(e, "act/person", `person/${p}`), add(e, "act/kind", kw(kind)), add(e, "act/of", of), ...extra.map(([a, v]) => add(e, a, v))];
+};
+const answered = (p: string, dim: string, value: string) => newAct(p, "answered", dim, [["act/value", kw(value)]]);
 
 const PEOPLE = [
   ["ana", "Ana Birch", "ana@example.com"],
@@ -56,10 +65,8 @@ const shared: Array<Op> = [
     add(`lesson/five-day-tools/${i + 1}`, "lesson/title", title),
   ]),
   add("dim/role", "dim/name", "role"),
-  add("dim/role", "dim/attr", "person/role"),
   // built in: the channel a person prefers, which picks within :via (or …) when they told us (D24)
   add("dim/channel", "dim/name", "channel"),
-  add("dim/channel", "dim/attr", "person/channel"),
   ...["email", "sms", "site"].map((c) => add("dim/channel", "dim/values", kw(c))),
   ...PEOPLE.flatMap(([id, name, email]) => [
     add(`person/${id}`, "person/name", name),
@@ -79,7 +86,7 @@ const send = (key: string, timing: { on: string } | { after: number }, job: stri
 const onList = { name: "on-list?", arg: "fernhill-news" } as const;
 // Fresh evidence: the list was built before these paths went live, so they reach back with :since.
 const SINCE = "2027-01-01T00:00Z";
-// Targets: the person's result, not ours (D28). An act is [p :did ACT]; only observed or asked counts.
+// Targets: the person's result, not ours (D28). A did act counts only when observed or asked.
 const did = (act: string) => ({ name: "did?", arg: act }) as const;
 const boughtP = (product: string) => ({ name: "bought?", arg: product }) as const;
 const shipped = { pred: did("shipped-tool"), within: 720 * H };
@@ -304,8 +311,18 @@ const INFERRED: ReadonlyArray<readonly [string, string]> = [
 // Signing up makes a site account and tags the person; the course path does the rest.
 const signup = (...who: Array<string>) => who.flatMap((p) => [add(`person/${p}`, "person/tags", "signup:five-day-tools"), add(`person/${p}`, "person/account", true)]);
 const SIGNUP = 'Site: "signed up for Five days of small tools"';
-const act = (p: string, a: string) => [add(`person/${p}`, "person/did", a)];
-const bought = (p: string, product: string) => [add(`person/${p}`, "person/bought", `product/${product}`), add(`person/${p}`, "person/tags", `bought:${product}`)];
+const act = (p: string, a: string) => newAct(p, "did", a);
+const bought = (p: string, product: string) => [...newAct(p, "bought", product), add(`person/${p}`, "person/tags", `bought:${product}`)];
+// D39: Ben finished the five days on the old course platform in September 2026. The import writes it in
+// January 2027 with the :act/at it happened. Teo's cleanup in November retracts and re-asserts every fact
+// of it; the act keeps its :act/at and its source, so the bridge, live since June, doesn't pitch him for it.
+const BEN_2026 = "2026-09-02T14:00Z";
+const benOld = [...newAct("ben", "finished", "five-day-tools"), add(`act/${actN}`, "act/at", BEN_2026), add(`act/${actN}`, "act/source", kw("observed"))];
+const cleanup = [...benOld.map((o) => ({ ...o, added: false })), ...benOld];
+// A refund retracts the purchase. Gus's re-buy in December is a new act with its own :act/at, so it's fresh.
+const gusFirst = bought("gus", "small-tools");
+const GUS_FIRST_AT = "2027-09-20T15:00Z";
+const refund = [...gusFirst, add(gusFirst[0]!.e as string, "act/at", GUS_FIRST_AT), add(gusFirst[0]!.e as string, "act/source", kw("observed"))].map((o) => ({ ...o, added: false }));
 
 
 // Content: one message per id a send or a vary names, with only the renditions its :via needs.
@@ -362,6 +379,7 @@ export const AUTHORED: ReadonlyArray<TxInput> = [
   tx("teo", "2027-01-04T17:00Z", "assumed", 'Mara: "Write the shape down before anything goes in it."', schemaOps()),
   tx("teo", "2027-01-05T17:00Z", "assumed", 'Teo: "Fake people only. Nothing real goes in the sketch."', shared),
   tx("adapter:shop", "2027-01-06T10:00Z", "observed", 'Shop: "order 1041, The Fernhill library"', bought("eli", "library")),
+  tx("adapter:import", "2027-01-07T10:00Z", "observed", 'Old course platform export: "Five-Day Tools completions, 2026"', benOld),
   copy("mara", "2027-01-11T17:50Z", 'Mara: "Copy for Cohort 7 first, then the dates."', c7),
   tx("mara", "2027-01-11T18:00Z", "assumed", 'Mara: "Doors open the first of March for two weeks. Class starts on the 22nd."', plan(undefined, c7)),
   everyone(tx("mara", "2027-01-20T22:00Z", "assumed", 'Mara: "Move doors to Tuesday the 2nd. Monday clashes with Small Tools office hours."', plan(c7, c7a)), "fieldkit-c7"),
@@ -380,8 +398,8 @@ export const AUTHORED: ReadonlyArray<TxInput> = [
     add("person/ben", "person/sms-consent", true),
     add("person/dee", "person/phone", "+1 555 0104"),
   ]),
-  tx("adapter:site", "2027-04-21T16:00Z", "asked", 'Profile form: "how should we reach you first?" answered', [add("person/ben", "person/channel", kw("email"))]),
-  tx("agent:desk", "2027-10-21T16:30Z", "inferred", 'Mara: "Dee opens every email. Guess she prefers email."', [add("person/dee", "person/channel", kw("email"))], "channel-from-opens"),
+  tx("adapter:site", "2027-04-21T16:00Z", "asked", 'Profile form: "how should we reach you first?" answered', answered("ben", "channel", "email")),
+  tx("agent:desk", "2027-10-21T16:30Z", "inferred", 'Mara: "Dee opens every email. Guess she prefers email."', answered("dee", "channel", "email"), "channel-from-opens"),
   // D35: an agent's move runs at once. agent:drafter adds the bf-02 role variants from the survey, by rule,
   // and moves everyone, so it raised few-values. D36: its own waiver is pending; agent:judge confirms it.
   everyone(tx("agent:drafter", "2027-10-22T15:00Z", "inferred", "survey-roles: 6 roles answered; podcasters and writers get their own bf-02, everyone else the plain one", plan(bfD0, bfD), "survey-roles"), "bf-2027"),
@@ -409,14 +427,14 @@ export const AUTHORED: ReadonlyArray<TxInput> = [
     "2027-10-20T16:00Z",
     "asked",
     'Answers to "What do you make?", imported as one transaction.',
-    [...ROLES.map((r) => add("dim/role", "dim/values", kw(r))), ...ASKED.map(([p, r]) => add(`person/${p}`, "person/role", kw(r)))],
+    [...ROLES.map((r) => add("dim/role", "dim/values", kw(r))), ...ASKED.flatMap(([p, r]) => answered(p, "role", r))],
   ),
   tx(
     "agent:desk",
     "2027-10-21T16:00Z",
     "inferred",
     'Mara: "Guess a role from the signup page for people who skipped the survey."',
-    INFERRED.map(([p, r]) => add(`person/${p}`, "person/role", kw(r))),
+    INFERRED.flatMap(([p, r]) => answered(p, "role", r)),
     "role-from-signup-page",
   ),
   tx("adapter:site", "2027-05-16T15:00Z", "observed", SIGNUP, signup("gus")),
@@ -433,6 +451,7 @@ export const AUTHORED: ReadonlyArray<TxInput> = [
   // days, and people-on-old-version alarms until Mara moves them a day later, in her own words (D32).
   tx("mara", "2027-11-21T10:00Z", "assumed", 'Mara: "People who finish want the next tool, not a discount. Give them four days of pitch."', plan(bridgeW, bridgeC)),
   { ...tx("mara", "2027-11-22T10:00Z", "assumed", 'Mara: "Move the people already in the bridge onto four days too. Ana is halfway through her pitch, and three days felt rushed."', []), moves: [{ path: "small-tools-bridge" }] },
+  tx("teo", "2027-11-15T10:00Z", "assumed", 'Teo: "Re-save the imported completions through the new adapter, so they lose the old platform\'s ids."', cleanup),
   tx("adapter:site", "2027-11-16T15:00Z", "observed", SIGNUP, signup("ben", "cy")),
   tx("adapter:shop", "2027-11-23T12:00Z", "observed", 'Shop: "order 2210, Small Tools, Shipped"', bought("cy", "small-tools")),
   tx("adapter:site", "2027-11-20T14:00Z", "observed", SIGNUP, signup("dee", "eli")),
@@ -451,7 +470,13 @@ export const AUTHORED: ReadonlyArray<TxInput> = [
   tx("adapter:shop", "2027-11-27T15:00Z", "observed", 'Shop: "order 2236, The Fernhill library"', bought("fay", "library")),
   tx("adapter:shop", "2027-11-29T20:00Z", "observed", 'Shop: "order 2251, The Fernhill library"', bought("hal", "library")),
   tx("adapter:mail", "2027-12-01T17:00Z", "asked", 'Reply: "late, but I shipped it"', act("eli", "shipped-tool")),
+  tx("adapter:shop", GUS_FIRST_AT, "observed", 'Shop: "order 2142, Small Tools, Shipped"', gusFirst),
+  tx("adapter:shop", "2027-09-24T11:00Z", "observed", 'Shop: "order 2142 refunded"', refund),
   tx("adapter:shop", "2027-12-05T12:00Z", "observed", 'Shop: "order 2290, Small Tools, Shipped"', bought("gus", "small-tools")),
+  // D33: one delivery the provider never confirmed. Ana's day-5 email went out five hours before Teo
+  // held the bridge for the outage. The provider's receipt never came, so the adapter marks it uncertain,
+  // and nothing retries it: a second email can't be unsent.
+  tx("adapter:mail", "2027-11-17T16:05Z", "observed", 'Mail provider: "no delivery receipt for day-5 to ana@example.com"', [add("delivery/ana/five-day-tools/day-5/email", "delivery/status", kw("uncertain"))]),
   tx("adapter:site", "2027-12-06T19:00Z", "observed", 'Site: "Small Tools workspace: first tool run"', act("cy", "tool-in-use")),
   tx("adapter:site", "2027-12-09T17:00Z", "observed", 'Site: "Small Tools workspace: first tool run"', act("gus", "tool-in-use")),
   tx("adapter:mail", "2027-12-10T16:00Z", "asked", 'Reply to "One question": "no budget yet, but I shipped a tool"', act("ben", "shipped-tool")),

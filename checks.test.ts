@@ -347,7 +347,11 @@ test("(and site email) writes two deliveries, and (or …) writes one with the p
 test("delivery/content is the last content tx before the send, and a later edit doesn't change it", () => {
   ok(fixTx > 0);
   for (const who of ["ana", "ben", "cy"]) ok(dsOf(who, "p1").every((x) => x.content < fixTx), who);
-  for (const who of ["ivy", "dee"]) ok(dsOf(who, "p1").every((x) => x.content === fixTx), who);
+  // per rendition: Teo's fix changed the email, so only the email deliveries after it carry it
+  for (const who of ["ivy", "dee"]) {
+    ok(dsOf(who, "p1").some((x) => x.via === "email" && x.content === fixTx), `${who} email`);
+    ok(dsOf(who, "p1").some((x) => x.via === "site" && x.content < fixTx), `${who} site`);
+  }
   // the same run without Teo's fix: what Ana got is recorded the same
   const noFix = interpret(AUTHORED.filter((x) => !x.why.startsWith('Teo: "The workspace link')), END);
   const anaNoFix = deliveriesOf(facts(noFix)).filter((x) => x.person === "person/ana" && x.send === `${BR}/p1`);
@@ -542,5 +546,104 @@ test("a check's source lays out at 44 columns and reads back the same", () => {
     deepStrictEqual(shape(parseQuery(fitted)), shape(query));
   }
 });
-console.log(failed === 0 ? `${PACK.length + 43} checks passed` : `${failed} failed`);
+
+// D39: acts carry when they happened. Freshness reads :act/at, never the transaction.
+const BRIDGE_LIVE = "2027-06-02T18:00Z";
+const entryAt = (d: Db, who: string, path: string): string | undefined =>
+  d.log.find((x) => x.datoms.some((y) => y.e === `person/${who}` && y.a === "path/entered" && y.v === path && y.added))?.at;
+// A made-up person who never signs up, so only the acts a test writes can let them in.
+const kit = (at: string): TxInput => ({ who: "adapter:site", at, source: "observed", why: 'Site: "account made"', ops: [{ e: "person/kit", a: "person/name", v: "Kit Vale", added: true }, { e: "person/kit", a: "person/email", v: "kit@example.org", added: true }] });
+const finishedAct = (e: string, happened: string): Array<Op> => [
+  { e, a: "act/person", v: "person/kit", added: true },
+  { e, a: "act/kind", v: kw("finished"), added: true },
+  { e, a: "act/of", v: "five-day-tools", added: true },
+  { e, a: "act/at", v: happened, added: true },
+  { e, a: "act/source", v: kw("observed"), added: true },
+];
+const written = (at: string, ops: Array<Op>, why = 'Old platform: "a completion"'): TxInput => ({ who: "adapter:import", at, source: "observed", why, ops });
+// a path that subscribes to the course, with :since, built from the bridge's own structure
+const oldFinishers = (since: string | undefined): TxInput => {
+  const b = fromFacts(BR, fs);
+  if (!b) throw new Error("no bridge");
+  const { since: _s, ...rest } = b;
+  const p: Path = { ...rest, id: "old-finishers", title: "Old finishers", waives: [], holds: [], ...(since === undefined ? {} : { since }) };
+  return { who: "mara", at: "2027-07-01T09:00Z", source: "assumed", why: 'Mara: "Everyone who ever finished the course."', ops: toFacts(p).map((t) => ({ ...t, added: true })) };
+};
+
+test("a retract and re-assert of an old act doesn't trigger enters-on", () => {
+  const cleanup = db.log.find((x) => x.who === "teo" && x.why.startsWith('Teo: "Re-save the imported completions'));
+  ok(cleanup, "the seed has Teo's cleanup");
+  // it retracts and re-asserts the same act/at
+  const at = cleanup.datoms.filter((d) => d.a === "act/at");
+  deepStrictEqual(at.map((d) => `${d.added ? "+" : "-"}${String(d.v)}`).sort(), ["+2026-09-02T14:00Z", "-2026-09-02T14:00Z"]);
+  // Ben enters the bridge only when he finishes the course again on the site, not on the cleanup
+  deepStrictEqual(entryAt(db, "ben", BR), "2027-11-20T19:00Z");
+  ok((dateMs(cleanup.at) ?? 0) < (dateMs("2027-11-20T19:00Z") ?? 0));
+  // and without the November course, the cleanup alone never enters him
+  const noCourse = interpret(AUTHORED.filter((x) => !(x.why.startsWith("Site: \"signed up") && x.ops.some((o) => o.e === "person/ben"))), "2027-12-31T00:00Z");
+  deepStrictEqual(entryAt(noCourse, "ben", BR), undefined);
+});
+test("a new act after go-live enters, and one written after go-live but done before doesn't", () => {
+  const fresh = interpret([...AUTHORED, kit("2027-06-20T09:00Z"), written("2027-07-01T09:00Z", finishedAct("act/kit-1", "2027-06-30T12:00Z"))], "2027-08-01T00:00Z");
+  deepStrictEqual(entryAt(fresh, "kit", BR), "2027-07-01T09:00Z");
+  const late = interpret([...AUTHORED, kit("2027-06-20T09:00Z"), written("2027-07-01T09:00Z", finishedAct("act/kit-1", "2027-06-01T12:00Z"))], "2027-08-01T00:00Z");
+  deepStrictEqual(entryAt(late, "kit", BR), undefined);
+  ok((dateMs("2027-06-01T12:00Z") ?? 0) < (dateMs(BRIDGE_LIVE) ?? 0));
+});
+test(":since lets an older act in", () => {
+  const base = [...AUTHORED, kit("2027-06-20T09:00Z"), written("2027-06-21T09:00Z", finishedAct("act/kit-1", "2026-03-01T12:00Z"))];
+  const withSince = interpret([...base, oldFinishers("2026-01-01T00:00Z")], "2027-08-01T00:00Z");
+  deepStrictEqual(entryAt(withSince, "kit", "old-finishers"), "2027-07-01T09:00Z");
+  // Ben's imported 2026 completion counts too: he enters at go-live
+  deepStrictEqual(entryAt(withSince, "ben", "old-finishers"), "2027-07-01T09:00Z");
+  const noSince = interpret([...base, oldFinishers(undefined)], "2027-08-01T00:00Z");
+  deepStrictEqual(entryAt(noSince, "kit", "old-finishers"), undefined);
+  // a :since after the act still keeps it out
+  const tooLate = interpret([...base, oldFinishers("2026-06-01T00:00Z")], "2027-08-01T00:00Z");
+  deepStrictEqual(entryAt(tooLate, "kit", "old-finishers"), undefined);
+});
+test("a re-buy after a refund is a new act, and it's fresh", () => {
+  const buys = (d: Db) => history(d).filter((x) => x.a === "act/person" && x.v === "person/gus" && x.added).map((x) => String(x.e)).filter((e, i, a) => a.indexOf(e) === i);
+  const kinds = buys(db).filter((e) => fs.some((f) => f.e === e && f.a === "act/kind" && String(f.v) === "bought") || history(db).some((x) => x.e === e && x.a === "act/kind" && String(x.v) === "bought"));
+  deepStrictEqual(kinds.length, 2, "two purchase acts");
+  const [first, second] = kinds as [string, string];
+  ok(!fs.some((f) => f.e === first), "the refunded purchase has no facts left");
+  deepStrictEqual(fs.find((f) => f.e === second && f.a === "act/at")?.v, "2027-12-05T12:00Z");
+  deepStrictEqual(entryAt(db, "gus", "small-tools-start"), "2027-12-05T12:00Z");
+});
+test("did? ignores an inferred act", () => {
+  const w = { facts: fs, history: hist };
+  const fay = fs.find((f) => f.a === "act/person" && f.v === "person/fay" && fs.some((g) => g.e === f.e && g.a === "act/of" && g.v === "shipped-tool"));
+  ok(fay, "Fay has a shipped-tool act");
+  deepStrictEqual(String(fs.find((f) => f.e === fay.e && f.a === "act/source")?.v), "inferred");
+  ok(!holds({ name: "did?", arg: "shipped-tool" }, "person/fay", w));
+  ok(holds({ name: "did?", arg: "shipped-tool" }, "person/hal", w));
+});
+test("an act's source is fixed by the transaction that first wrote it", () => {
+  // Ben's imported 2026 completion, first written observed
+  const e = String(fs.find((f) => f.a === "act/at" && f.v === "2026-09-02T14:00Z")?.e);
+  const r = transact(db, { who: "teo", at: "2028-02-02T09:00Z", source: "assumed", why: 'Teo: "Fix the source."', ops: [{ e, a: "act/source", v: kw("observed"), added: false }, { e, a: "act/source", v: kw("asked"), added: true }] });
+  ok(!r.ok && r.error.includes("fixed by t="), r.ok ? "accepted" : r.error);
+  const same = transact(db, { who: "teo", at: "2028-02-02T09:00Z", source: "assumed", why: 'Teo: "Re-save it."', ops: [{ e, a: "act/source", v: kw("observed"), added: false }, { e, a: "act/source", v: kw("observed"), added: true }] });
+  ok(same.ok, same.ok ? "" : same.error);
+});
+test("a fix to one rendition leaves the other rendition's version alone", () => {
+  const fix = db.log.find((x) => x.who === "teo" && x.why.startsWith('Teo: "The workspace link'))?.t ?? 0;
+  const ivy = deliveriesOf(fs).filter((x) => x.person === "person/ivy" && x.send === `${BR}/p1`);
+  deepStrictEqual(ivy.find((x) => x.via === "email")?.content, fix);
+  const site = ivy.find((x) => x.via === "site")?.content ?? 0;
+  ok(site > 0 && site < fix, `site ${site}`);
+  // it's the bridge copy's transaction, the last one to touch the site rendition
+  deepStrictEqual(db.log.filter((x) => x.t < fix && x.datoms.some((d) => d.e === "message/p1/site" || d.e === "message/p1")).at(-1)?.t, site);
+});
+test("one uncertain delivery: uncertain-sends fires, and nothing retried it", () => {
+  const ds = deliveriesOf(fs).filter((x) => x.status === "uncertain");
+  deepStrictEqual(ds.map((x) => `${x.person} ${x.send} ${x.via}`), ["person/ana five-day-tools/day-5 email"]);
+  const v = verdict(text("five-day-tools"), { facts: fs, history: hist });
+  ok(v.findings.some((f) => f.check === "uncertain-sends"), JSON.stringify(v.findings.map((f) => f.check)));
+  // one delivery per person, send and channel, and one send/sent: no second email
+  deepStrictEqual(hist.filter((x) => x.a === "delivery/key" && x.added && x.v === "person/ana|five-day-tools/day-5|email").length, 1);
+  deepStrictEqual(hist.filter((x) => x.e === "person/ana" && x.a === "send/sent" && x.v === "five-day-tools/day-5" && x.added).length, 1);
+});
+console.log(failed === 0 ? `${PACK.length + 51} checks passed` : `${failed} failed`);
 if (failed > 0) process.exit(1);

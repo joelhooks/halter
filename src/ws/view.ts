@@ -4,7 +4,8 @@
 // the static pages use, so each has one source; everything a reader acts on is a builder element.
 import type { Html, HtmlBuilder } from "foldkit/html";
 import { Button, Input, Select, Textarea } from "@foldkit/ui";
-import { SOURCES, asOf, facts, type Db } from "../db.ts";
+import { SOURCES, asOf, dateMs, facts, history, type Db } from "../db.ts";
+import { holds, people } from "../pred.ts";
 import { pendingText, quotes, type Finding, type Verdict } from "../checks.ts";
 import { BIB_BY_KEY } from "../bib.ts";
 import { highlight } from "../hl.ts";
@@ -123,17 +124,18 @@ export const placesView = (h: H, db: Db, id: string): Html => {
       td(h, "target", [targetOf(o, x.person)], `tg tg-${targetOf(o, x.person)}`),
     ]),
   );
-  // Fresh evidence: people who already matched before the path went live stay out.
+  // Fresh evidence (D39): people whose enters-on holds only on evidence from before the path went live stay out.
   if (p?.entersOn && p.since === undefined) {
     const live = db.log.find((tx) => tx.datoms.some((d) => d.e === id && d.a === "path/title" && d.added));
-    if (live) {
+    const liveAt = live ? dateMs(live.at) : undefined;
+    if (live && liveAt !== undefined) {
       const entered = new Set(places.map((x) => x.person));
-      const arg = p.entersOn.arg ?? "";
-      for (const f of facts(asOf(db, live.t - 1))) {
-        const done = (f.a === "person/finished" && f.v === `course/${arg}`) || (f.a === "path/finished" && f.v === arg);
-        if (p.entersOn.name === "finished?" && done && !entered.has(String(f.e))) {
-          rows.push(h.keyed("tr")(`out-${String(f.e)}`, [h.Class("out")], [td(h, "person", [name(String(f.e))]), h.td([h.Colspan(3), h.DataAttribute("label", "where")], [`stayed out: finished before this path went live at t=${live.t}`])]));
-        }
+      const w = { facts: facts(db), history: history(db) };
+      const entry = p.entersOn;
+      for (const person of people(w)) {
+        if (entered.has(person) || w.facts.some((f) => f.e === person && f.a === "path/entered" && f.v === id)) continue;
+        if (!holds(entry, person, w) || holds(entry, person, w, liveAt)) continue;
+        rows.push(h.keyed("tr")(`out-${person}`, [h.Class("out")], [td(h, "person", [name(person)]), h.td([h.Colspan(3), h.DataAttribute("label", "where")], [`stayed out: matched only on evidence from before this path went live at t=${live.t}`])]));
       }
     }
   }

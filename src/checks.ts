@@ -153,8 +153,9 @@ export const DOCTRINE = [
   :say "send {?k} states {?dn} as who they are, but {?n} people's values are inferred. Ask them, or drop :hard."
   :at (?s :send/vary-hard)
   :where ((?s :send/path ?c) (?s :send/key ?k) (?s :send/vary-by ?d) (?s :send/vary-hard true)
-          (?d :dim/name ?dn) (?d :dim/attr ?attr)
-          (count ?n ?p (?p ?attr ?v) (?p ?attr ?v ?tx true) (?tx :tx/source inferred))
+          (?d :dim/name ?dn)
+          (count ?n ?p (?a :act/of ?dn) (?a :act/kind answered) (?a :act/source inferred) (?a :act/person ?p) (?a :act/at ?t)
+                 (not (?b :act/person ?p) (?b :act/kind answered) (?b :act/of ?dn) (?b :act/at ?u) (> ?u ?t)))
           (> ?n 0)))`,
   `(check "synthetic-live" :severity refuse :cites (bc-gates)
   :say "synthetic person {?who} is on {?l}, which {?c} sends to. Synthetic people only run in simulations."
