@@ -189,6 +189,29 @@ await test("a :bonus the offer doesn't declare is refused, and declaring it clea
   );
 });
 
+// D42: an objection needs a fix or proof send that answers it, and only an objection can be answered.
+const ANSWER = "\n      :answers (why-not no-time)";
+await test("answering an objection in a fix send clears it, and answering a non-objection is refused (D42)", () => {
+  const m = at("small-tools-bridge", HEAD, { tab: "Edit" });
+  const head = draftText(m);
+  if (!head.includes(ANSWER)) throw new Error("the bridge's p1 has no :answers");
+  const unanswered = head.replace(ANSWER, "");
+  scene(
+    program,
+    given(m),
+    type(selector("textarea.lisp-edit"), unanswered),
+    expect(text("objection why-not no-time has no fix, or is only answered in a faq send.", { exact: false })).toExist(),
+    type(selector("textarea.lisp-edit"), head),
+    expect(text("objection-has-fix")).not.toExist(),
+    type(selector("textarea.lisp-edit"), head.replace("(why-not no-time)", "(why-not didnt-see-it)")),
+    type(selector("label.why input"), 'Mara: "Tell people who missed it."'),
+    expect(text("send p1 answers why-not didnt-see-it, which isn't one of its objections.", { exact: false })).toExist(),
+    click(role("button", { name: "Commit" })),
+    Command.expectNone(),
+    expect(text("Nothing committed: refused: value-declared:", { exact: false })).toExist(),
+  );
+});
+
 console.log(failed === 0 ? `${passed} scenes passed` : `${failed} failed`);
 if (failed) {
   process.exitCode = 1;

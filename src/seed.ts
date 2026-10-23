@@ -2,7 +2,7 @@
 // The authored transactions are below. The interpreter adds the path events between them.
 import { asOf, dateMs, diff, facts, kw, msDate, schemaOps, type Db, type EvidenceKind, type Op, type TxInput } from "./db.ts";
 import { contentFacts, type Message } from "./content.ts";
-import { allSends, fromFacts, toFacts, type Path, type Send, type Via } from "./model.ts";
+import { allSends, dimFacts, fromFacts, toFacts, type Dimension, type Path, type Send, type Via } from "./model.ts";
 import { interpret } from "./run.ts";
 
 const H = 3_600_000;
@@ -189,8 +189,9 @@ const bridge: Path = {
     {
       name: "pitch",
       sends: [
-        send("p1", { after: 0 }, "fix", { via: SITE_EMAIL }),
-        send("p2", { after: 24 * H }, "proof"),
+        // D42: the pitch answers the two objections the author marked on why-not
+        send("p1", { after: 0 }, "fix", { via: SITE_EMAIL, answers: [{ dim: "why-not", value: "no-time" }] }),
+        send("p2", { after: 24 * H }, "proof", { answers: [{ dim: "why-not", value: "too-expensive" }] }),
         send("p3", { after: 66 * H }, "last-call", { via: SMS_EMAIL, deadline: "close" }),
       ],
       tos: [{ target: "closed", after: 72 * H }],
@@ -221,7 +222,8 @@ const why: Path = {
   list: "fernhill-news",
   entersOn: { name: "finished?", arg: "small-tools-bridge" },
   holds: [],
-  states: [{ name: "ask", sends: [send("w1", { after: 24 * H }, "survey")], tos: [] }],
+  // w2 answers the price, but only as a faq, so objection-has-fix fires here (D42)
+  states: [{ name: "ask", sends: [send("w1", { after: 24 * H }, "survey"), send("w2", { after: 72 * H }, "faq", { answers: [{ dim: "why-not", value: "too-expensive" }] })], tos: [] }],
   target: shipped,
   guard: [],
   pace: { rate: 150 },
@@ -348,6 +350,7 @@ const SUBJECT: Readonly<Record<string, string>> = {
   p2: "What people shipped",
   p3: "Small Tools closes in six hours",
   w1: "One question, one answer",
+  w2: "What Small Tools costs, and what's in it",
   s1: "Your Small Tools workspace is ready",
   s2: "Run your first tool",
   s3: "Stuck? Reply and we'll look",
@@ -380,6 +383,15 @@ export const messagesFor = (m: Path): Array<Message> => {
   }));
 };
 const copy = (who: string, at: string, why: string, m: Path) => tx(who, at, "assumed", why, contentFacts(messagesFor(m)).map((t) => ({ ...t, added: true })));
+
+// D42: why people didn't buy. Mara marks the two answers a send can answer; the rest are facts to listen to.
+export const WHY_NOT: Dimension = {
+  name: "why-not",
+  values: ["no-time", "too-expensive", "not-for-me", "didnt-see-it", "bought-elsewhere"],
+  many: true,
+  objections: ["no-time", "too-expensive"],
+};
+const whyNot = (p: string, values: ReadonlyArray<string>) => values.flatMap((v) => answered(p, "why-not", v));
 
 export const AUTHORED: ReadonlyArray<TxInput> = [
   tx("teo", "2027-01-04T17:00Z", "assumed", 'Mara: "Write the shape down before anything goes in it."', schemaOps()),
@@ -460,6 +472,10 @@ export const AUTHORED: ReadonlyArray<TxInput> = [
   tx("teo", "2027-11-15T10:00Z", "assumed", 'Teo: "Re-save the imported completions through the new adapter, so they lose the old platform\'s ids."', cleanup),
   tx("adapter:site", "2027-11-16T15:00Z", "observed", SIGNUP, signup("ben", "cy")),
   tx("adapter:shop", "2027-11-23T12:00Z", "observed", 'Shop: "order 2210, Small Tools, Shipped"', bought("cy", "small-tools")),
+  tx("mara", "2027-06-01T17:00Z", "assumed", 'Mara: "No time and the price are the two we can answer. Not for me, didn\'t see it and bought elsewhere we just listen to."', dimFacts(WHY_NOT).map((t) => ({ ...t, added: true }))),
+  // replies to w1, the survey: asked, because the person told us (D42)
+  tx("adapter:mail", "2027-11-25T08:10Z", "asked", 'Survey reply: "No time this month, and honestly it\'s a lot of money."', whyNot("ana", ["no-time", "too-expensive"])),
+  tx("adapter:mail", "2027-12-02T07:45Z", "asked", 'Survey reply: "Too busy before the holidays, and I never saw the sale emails."', whyNot("dee", ["no-time", "didnt-see-it"])),
   // D41: Gus bought the template pack on its own in August, so Black Friday's bonus send isn't for him
   tx("adapter:shop", "2027-08-12T11:00Z", "observed", 'Shop: "order 2117, The Fernhill template pack"', bought("gus", "template-pack")),
   tx("adapter:site", "2027-11-20T14:00Z", "observed", SIGNUP, signup("dee", "eli")),
@@ -506,7 +522,8 @@ export const AUTHORED: ReadonlyArray<TxInput> = [
   tx("adapter:mail", "2027-11-17T16:05Z", "observed", 'Mail provider: "no delivery receipt for day-5 to ana@example.com"', [add("delivery/ana/five-day-tools/day-5/email", "delivery/status", kw("uncertain"))]),
   tx("adapter:site", "2027-12-06T19:00Z", "observed", 'Site: "Small Tools workspace: first tool run"', act("cy", "tool-in-use")),
   tx("adapter:site", "2027-12-09T17:00Z", "observed", 'Site: "Small Tools workspace: first tool run"', act("gus", "tool-in-use")),
-  tx("adapter:mail", "2027-12-10T16:00Z", "asked", 'Reply to "One question": "no budget yet, but I shipped a tool"', act("ben", "shipped-tool")),
+  // one reply, two answers: why he didn't buy (D42) and what he did (D28)
+  tx("adapter:mail", "2027-12-10T16:00Z", "asked", 'Reply to "One question": "no budget yet, but I shipped a tool"', [...whyNot("ben", ["too-expensive"]), ...act("ben", "shipped-tool")]),
   tx("adapter:site", "2027-12-15T18:00Z", "observed", 'Site: "course completed: Writing for the web"', act("fay", "finished-a-library-course")),
 ];
 

@@ -1,6 +1,6 @@
 // The halter file is a printout of the facts. print(asOf(db, t)) is what the page shows.
 // One canonical form per meaning: fixed form order, fixed key order, two-space indent.
-import { ATOMS, isAtom, type GuardClause, type Path, type Pred, type Send, type To, type Via } from "./model.ts";
+import { ATOMS, isAtom, type Answer, type Dimension, type GuardClause, type Path, type Pred, type Send, type To, type Via } from "./model.ts";
 import { commentLines, flat, form, layout, pairs, type Form, type Node } from "./fit.ts";
 
 const q = JSON.stringify;
@@ -27,6 +27,12 @@ export const printAction = (g: GuardClause): string => flat(actionNode(g));
 const viaNode = (v: Via): Node => (v.op === undefined ? v.channels.join(" ") : form(v.op, v.channels));
 export const printVia = (v: Via): string => flat(viaNode(v));
 
+// :answers (DIM VALUE), or ((DIM VALUE) (DIM VALUE)) for more than one
+const answersNode = (xs: ReadonlyArray<Answer>): Node => {
+  const one = (x: Answer) => form(x.dim, [x.value]);
+  const [first, ...rest] = xs;
+  return first === undefined ? "()" : rest.length === 0 ? one(first) : form("", xs.map(one));
+};
 const sendNode = (s: Send): Form => {
   const v = s.vary;
   return form("send", [
@@ -38,6 +44,7 @@ const sendNode = (s: Send): Form => {
       ["via", s.via === undefined ? undefined : viaNode(s.via)],
       ["deadline", s.deadline],
       ["bonus", s.bonus === undefined ? undefined : q(s.bonus)],
+      ["answers", s.answers === undefined ? undefined : answersNode(s.answers)],
     ]),
     v && form("vary", [v.dim, v.hard && ":hard", ...v.cases.map((c) => form(c.value, [q(c.message)])), v.else !== undefined && form("else", [q(v.else)])]),
   ]);
@@ -109,5 +116,8 @@ export const printPath = (m: Path, notes: Notes = {}): string => {
     .join("\n")}\n` : "";
   return `${head}${layout(pathNode(m, notes), 0, notes.width)}\n`;
 };
+// A dimension prints as LANGUAGE.md writes it: its values as one list, then :many, then :objections.
+export const printDimension = (d: Dimension): string =>
+  `${layout(form("dimension", [d.name, form("", d.values), d.many && ":many", ...(d.objections.length ? [":objections", form("", d.objections)] : [])]), 0)}\n`;
 // Older call sites print a "campaign"; it is a path.
 export const printCampaign = printPath;

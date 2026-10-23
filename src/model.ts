@@ -96,6 +96,8 @@ export interface Send {
   readonly deadline?: string;
   // the bonus product this send offers (D41); every variant carries it
   readonly bonus?: string;
+  // the objections it answers, :answers (DIM VALUE) (D42)
+  readonly answers?: ReadonlyArray<Answer>;
   readonly vary?: Vary;
 }
 export interface To {
@@ -119,6 +121,34 @@ export interface Offer {
   // (bonus PRODUCT :until EVENT): extras that come with buying, until an offer event (D41)
   readonly bonuses?: ReadonlyArray<Bonus>;
 }
+export interface Answer {
+  readonly dim: string;
+  readonly value: string;
+}
+// (dimension NAME (VALUE…) [:many] [:objections (VALUE…)]). Nothing reserves a name: "objection" is a
+// mark on some of a dimension's answers, put there by its author (D42).
+export interface Dimension {
+  readonly name: string;
+  readonly values: ReadonlyArray<string>;
+  readonly many: boolean;
+  readonly objections: ReadonlyArray<string>;
+}
+export const dimFacts = (d: Dimension): Array<Triple> => {
+  const e = DIM + d.name;
+  return [
+    { e, a: "dim/name", v: d.name },
+    ...d.values.map((v) => ({ e, a: "dim/values", v: kw(v) })),
+    ...(d.many ? [{ e, a: "dim/many", v: true }] : []),
+    ...d.objections.map((v) => ({ e, a: "dim/objections", v: kw(v) })),
+  ];
+};
+export const dimFromFacts = (name: string, facts: ReadonlyArray<Triple>): Dimension | undefined => {
+  const e = DIM + name;
+  const mine = facts.filter((f) => f.e === e);
+  if (!mine.some((f) => f.a === "dim/name")) return undefined;
+  const kws = (a: string) => mine.filter((f) => f.a === a).map((f) => (f.v instanceof Kw ? f.v.name : String(f.v)));
+  return { name, values: kws("dim/values"), many: mine.some((f) => f.a === "dim/many" && f.v === true), objections: kws("dim/objections") };
+};
 export interface Bonus {
   readonly product: string;
   readonly until: string;
@@ -168,6 +198,7 @@ export const stateId = (c: string, name: string) => `${c}/state/${name}`;
 export const toId = (c: string, state: string, rank: number) => `${stateId(c, state)}/to/${rank}`;
 export const sendId = (c: string, key: string) => `${c}/send/${key}`;
 export const bonusId = (c: string, rank: number) => `${offerId(c)}/bonus/${rank}`;
+export const answersId = (c: string, key: string, rank: number) => `${sendId(c, key)}/answers/${rank}`;
 export const variantId = (c: string, key: string, rank: number) => `${sendId(c, key)}/vary/${rank}`;
 export const viaId = (c: string, key: string, rank: number) => `${sendId(c, key)}/via/${rank}`;
 export const guardId = (c: string, rank: number) => `${c}/guard/${rank}`;
@@ -256,6 +287,13 @@ export const toFacts = (m: Path): Array<Triple> => {
       put(e, "send/after", s.after);
       put(e, "send/deadline", s.deadline === undefined ? undefined : kw(s.deadline));
       put(e, "send/bonus", s.bonus);
+      (s.answers ?? []).forEach((x, j) => {
+        const ae = answersId(c, s.key, j + 1);
+        put(ae, "answers/send", e);
+        put(ae, "answers/rank", j + 1);
+        put(ae, "answers/dim", DIM + x.dim);
+        put(ae, "answers/value", kw(x.value));
+      });
       if (s.via) {
         put(e, "send/via-op", s.via.op === undefined ? undefined : kw(s.via.op));
         s.via.channels.forEach((ch, j) => {
@@ -389,6 +427,11 @@ export const fromFacts = (c: string, triples: ReadonlyArray<Triple>): Path | und
   for (const [e, bag] of bags) {
     if (!bag.has("send/path")) continue;
     const vs = byRank(variants.get(String(e)) ?? []).map((x) => x.v);
+    const answers: Array<Answer> = byRank(
+      [...bags.entries()]
+        .filter(([, b]) => str(b, "answers/send") === String(e))
+        .map(([, b]) => ({ rank: num(b, "answers/rank") ?? 0, x: { dim: strip(str(b, "answers/dim"), DIM) ?? "", value: key(b, "answers/value") ?? "" } })),
+    ).map((y) => y.x);
     const dim = strip(str(bag, "send/vary-by"), DIM);
     const chs = byRank(vias.get(String(e)) ?? []).map((x) => x.ch);
     const op = key(bag, "send/via-op");
@@ -403,6 +446,7 @@ export const fromFacts = (c: string, triples: ReadonlyArray<Triple>): Path | und
         ...opt("job", key(bag, "send/job")),
         ...opt("deadline", key(bag, "send/deadline")),
         ...opt("bonus", str(bag, "send/bonus")),
+        ...(answers.length === 0 ? {} : { answers }),
         ...(dim === undefined ? {} : { vary: { dim, hard: one(bag, "send/vary-hard") === true, cases: vs, ...opt("else", str(bag, "send/vary-else")) } }),
       },
     });

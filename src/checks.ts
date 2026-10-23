@@ -93,12 +93,27 @@ export const SHAPE = [
   :at (?s :send/vary-by)
   :where ((?s :send/path ?c) (?s :send/key ?k) (?s :send/vary-by ?d) (?d :dim/name ?dn)
           (not (?s :send/vary-else _))))`,
+  // Covers a vary, an :answers, and the :objections of a dimension a send uses (D42). The line is the
+  // variant's or the :answers pair's; a dimension's own list isn't in the path, so it points at the send.
   `(check "value-declared" :severity refuse
-  :say "send {?k} varies by {?d} on {?val}, which isn't declared. Declare it on the dimension first."
-  :at (?s :send/vary-by)
-  :where ((?s :send/path ?c) (?s :send/key ?k) (?s :send/vary-by ?d)
-          (or (and (not (?d :dim/name _)) (= ?val "the dimension itself"))
-              (and (?v :variant/send ?s) (?v :variant/value ?val) (not (?d :dim/values ?val))))))`,
+  :say "send {?k} {?how} {?dn} {?val}, which {?isnt}."
+  :at ?x
+  :where ((?s :send/path ?c) (?s :send/key ?k)
+          (or (and (?s :send/vary-by ?d) (= ?how "varies by") (not (?d :dim/name _))
+                   (= ?dn ?d) (= ?val "itself") (= ?isnt "isn't a declared dimension") (= ?x ?s))
+              (and (?s :send/vary-by ?d) (= ?how "varies by") (?d :dim/name ?dn)
+                   (?x :variant/send ?s) (?x :variant/value ?val) (not (?d :dim/values ?val))
+                   (= ?isnt "isn't one of its values. Declare it on the dimension first"))
+              (and (?x :answers/send ?s) (?x :answers/dim ?d) (= ?how "answers") (not (?d :dim/name _))
+                   (= ?dn ?d) (= ?val "itself") (= ?isnt "isn't a declared dimension"))
+              (and (?x :answers/send ?s) (?x :answers/dim ?d) (?x :answers/value ?val) (= ?how "answers")
+                   (?d :dim/name ?dn) (not (?d :dim/values ?val)) (= ?isnt "isn't one of its values"))
+              (and (?x :answers/send ?s) (?x :answers/dim ?d) (?x :answers/value ?val) (= ?how "answers")
+                   (?d :dim/name ?dn) (?d :dim/values ?val) (not (?d :dim/objections ?val))
+                   (= ?isnt "isn't one of its objections. Answer an objection, or mark this one on the dimension"))
+              (and (or (?s :send/vary-by ?d) (and (?a :answers/send ?s) (?a :answers/dim ?d)))
+                   (?d :dim/name ?dn) (?d :dim/objections ?val) (not (?d :dim/values ?val)) (= ?how "uses")
+                   (= ?isnt "it marks as an objection but doesn't declare") (= ?x ?s)))))`,
   `(check "trigger-has-evidence" :severity refuse
   :say "the {?where} trigger has no positive clause. (not …) alone is true for everyone before anything happens. Name a fact it must see."
   :at ?r
@@ -210,6 +225,15 @@ export const DOCTRINE = [
           (not (?s :send/path ?c) (?s :send/job survey))
           (not (?q :path/enters-on ?e) (?e :pred/name finished?) (?e :pred/arg ?c)
                (?w :send/path ?q) (?w :send/job survey))))`,
+  // Per path: each objection of a dimension the path uses needs a fix or proof send that answers it (D42).
+  // A path that uses no dimension with objections passes; values nobody marked never alarm.
+  `(check "objection-has-fix" :severity alarm :cites (stb)
+  :say "objection {?dn} {?o} has no fix, or is only answered in a faq send. Answer it in a fix or proof send."
+  :at ?c
+  :where ((?s :send/path ?c) (or (?s :send/vary-by ?d) (and (?a :answers/send ?s) (?a :answers/dim ?d)))
+          (?d :dim/name ?dn) (?d :dim/objections ?o)
+          (not (?f :send/path ?c) (?f :send/job ?j) (in? ?j fix proof)
+               (?b :answers/send ?f) (?b :answers/dim ?d) (?b :answers/value ?o))))`,
   `(check "target-is-our-object" :severity alarm :cites (hulick)
   :say "the target of {?c} only reads bought?. That's our result, not theirs. Name what buying gets them, e.g. (and (bought? …) (did? …))."
   :at ?r
@@ -245,7 +269,6 @@ export const DOCTRINE = [
 
 // Doctrine checks LANGUAGE.md lists that this sketch doesn't build yet, and why.
 export const UNBUILT: ReadonlyArray<{ readonly name: string; readonly severity: "refuse" | "alarm"; readonly cites: string; readonly why: string }> = [
-  { name: "objection-has-fix", severity: "alarm", cites: "stb", why: "claims, proof and objections aren't facts in this sketch yet." },
 ];
 
 export const PACK: ReadonlyArray<{ readonly source: string; readonly query: Query; readonly shape: boolean }> = [

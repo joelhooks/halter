@@ -34,7 +34,7 @@ export const BREAK: Record<string, ReadonlyArray<readonly [string, string]>> = {
     ['\n        (else "bf-02")', ""],
   ],
   "spring-note": [['(enters-on (on-list? "fernhill-news")', '(enters-on (not (bought? "library"))']],
-  "why-didnt-you-buy": [['      :via email))', '      :via email)\n    (to closed :when (bought? "small-tools")))']],
+  "why-didnt-you-buy": [['      :answers (why-not too-expensive)))', '      :answers (why-not too-expensive))\n    (to closed :when (bought? "small-tools")))']],
   "five-day-tools": [['(send "day-3" :after 48h\n      :job teach\n      :via (and site email))', '(send "day-3" :after 48h\n      :job teach\n      :via (and site sms))']],
 };
 

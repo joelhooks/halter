@@ -9,20 +9,20 @@ import { feedView } from "./src/ws/view.ts";
 import type { Db as FeedDb } from "./src/db.ts";
 const feedHtml = (d: FeedDb, id: string): string => renderHtml((h) => feedView(h, d, id));
 import type { Finding } from "./src/checks.ts";
-import { fromFacts, toFacts, type Path } from "./src/model.ts";
+import { dimFromFacts, fromFacts, toFacts, type Path } from "./src/model.ts";
 import { interpret, refusalAt } from "./src/run.ts";
 import { holds } from "./src/pred.ts";
 import { parseVersion } from "./src/version.ts";
 import { kwName } from "./src/time.ts";
 import { deliveriesOf, deliveryOps, keyLookup } from "./src/delivery.ts";
-import { printPath } from "./src/printer.ts";
-import { readPath } from "./src/extract.ts";
+import { printDimension, printPath } from "./src/printer.ts";
+import { readDimension, readPath } from "./src/extract.ts";
 import { toldFacts } from "./src/deadline.ts";
 import { fitSource } from "./src/fit.ts";
 import { readFileSync } from "node:fs";
 import { cursorOf, feedOf, markSeenOps, messagesOf, refusedOn, touchesFeed } from "./src/feed.ts";
 import { parseQuery, run } from "./src/query.ts";
-import { AUTHORED, closeShift, HORIZON, PATHS, seedDb } from "./src/seed.ts";
+import { AUTHORED, closeShift, HORIZON, PATHS, seedDb, WHY_NOT } from "./src/seed.ts";
 
 const db = seedDb();
 const fs = facts(db);
@@ -55,7 +55,8 @@ const PLANTED: Record<string, { readonly src: string; readonly extra?: ReadonlyA
   "else-on-every-vary": { src: swap(F, ' (else "bf-02")', "") },
   "value-declared": { src: swap(F, '(writer "bf-02-writer")', '(knitter "bf-02-knitter")') },
   "trigger-has-evidence": { src: swap(W, '(enters-on\n    (finished? "small-tools-bridge"))', '(enters-on (not (bought? "small-tools")))') },
-  "wait-has-timeout": { src: swap(W, '      :via email))', '      :via email)\n    (to closed :when (bought? "small-tools")))') },
+  "wait-has-timeout": { src: swap(W, '      :answers (why-not too-expensive)))', '      :answers (why-not too-expensive))\n    (to closed :when (bought? "small-tools")))') },
+  "objection-has-fix": { src: swap(B, '\n      :answers (why-not too-expensive)', "") },
   "fake-deadline": { src: swap(C, " :deadline early-bird", "") },
   "pitch-to-buyer": { src: swap(B, '  (exit-on (bought? "small-tools"))\n', "") },
   // bf-02 is :hard; a second guessed role on one of its variants
@@ -98,7 +99,7 @@ const PLANTED: Record<string, { readonly src: string; readonly extra?: ReadonlyA
   "few-values": { src: swap(F, "  (waive few-values)\n", "") },
   "post-close-survey": { src: swap(F, '\n    (send "bf-06" :on "2027-12-02T17:00Z"\n      :job survey\n      :via email))', ")") },
   "message-exists": { src: swap(B, '(send "p2" :after 24h', '(send "p2b" :after 24h') },
-  "via-has-rendition": { src: swap(B, '      :job proof\n      :via email)', '      :job proof\n      :via (or sms email))') },
+  "via-has-rendition": { src: swap(B, '      :job proof\n      :via email\n', '      :job proof\n      :via (or sms email)\n') },
   "support-to-buyers": { src: swap(B, ":job proof", ":job support") },
   "path-has-target": { src: swap(W, '\n  (target (did? "shipped-tool")\n    :within 720h)', "") },
   "target-is-our-object": { src: swap(B, '(target (and (bought? "small-tools")\n               (did? "tool-in-use"))\n    :within 1440h)', '(target (bought? "small-tools") :within 1440h)') },
@@ -581,8 +582,15 @@ test("the printer prints the seed paths exactly as LANGUAGE.md's reflowed blocks
     ok(block, `LANGUAGE.md prints ${id}`);
     const p = fromFacts(id, fs);
     ok(p);
-    deepStrictEqual(printPath({ ...p, waives: [] }), block);
+    // LANGUAGE.md's bridge block shows no :answers; the seed's pitch answers why-not (D42)
+    const { states } = p;
+    const bare = states.map((st) => ({ ...st, sends: st.sends.map(({ answers: _a, ...x }) => x) }));
+    deepStrictEqual(printPath({ ...p, states: bare, waives: [] }), block);
   }
+  // and the dimension prints as LANGUAGE.md declares it
+  const dim = blocks.find((b) => b.startsWith("(dimension why-not\n"));
+  ok(dim);
+  deepStrictEqual(printDimension(WHY_NOT), dim);
 });
 test("a check's source lays out at 44 columns and reads back the same", () => {
   for (const { source, query } of PACK) {
@@ -803,6 +811,75 @@ test("deadline-kept covers a bonus's :until: moving it after a bonus send told s
   const early = attempt(closeShift(db, { hours: 48, at: "2027-11-28T00:00Z" }));
   deepStrictEqual(early, "accepted");
 });
+// D42: objections are a type of answer.
+const objections = (src: string, extra: ReadonlyArray<Triple> = [], drop: (t: Triple) => boolean = () => false) =>
+  verdict(src, { facts: [...fs.filter((t) => !drop(t)), ...extra], history: hist }).findings.filter((f) => f.check === "objection-has-fix").map((f) => f.message);
+const NO_FIX = (o: string) => `objection why-not ${o} has no fix, or is only answered in a faq send. Answer it in a fix or proof send.`;
+test("the bridge answers both objections in its fix and proof sends, so objection-has-fix is quiet", () => {
+  deepStrictEqual(objections(B), []);
+});
+test("an objection with no answer alarms", () => {
+  deepStrictEqual(objections(swap(B, "\n      :answers (why-not too-expensive)", "")), [NO_FIX("too-expensive")]);
+});
+test("an objection answered only in a faq send alarms", () => {
+  // why-didnt-you-buy: w2 answers the price as a faq, and nothing answers no-time
+  deepStrictEqual(objections(W).sort(), [NO_FIX("no-time"), NO_FIX("too-expensive")]);
+  deepStrictEqual(objections(swap(B, ":job proof", ":job faq")), [NO_FIX("too-expensive")]);
+});
+test("a fix or a proof answer clears it", () => {
+  deepStrictEqual(objections(swap(W, ":job faq", ":job proof")), [NO_FIX("no-time")]);
+  deepStrictEqual(objections(swap(W, ":job faq", ":job fix").replace(":answers (why-not too-expensive)", ":answers ((why-not too-expensive)\n                (why-not no-time))")), []);
+});
+test("an :answers naming a value that isn't an objection, or isn't declared, is refused by value-declared", () => {
+  const refused = (src: string) => verdict(src, { facts: fs, history: hist }).findings.filter((f) => f.check === "value-declared").map((f) => `${f.line} ${f.message}`);
+  const notObjection = swap(B, "(why-not no-time)", "(why-not didnt-see-it)");
+  deepStrictEqual(refused(notObjection), [`${notObjection.split("\n").findIndex((l) => l.includes("didnt-see-it")) + 1} send p1 answers why-not didnt-see-it, which isn't one of its objections. Answer an objection, or mark this one on the dimension.`]);
+  deepStrictEqual(refused(swap(B, "(why-not no-time)", "(why-not bored)")).map((x) => x.replace(/^\d+ /, "")), ["send p1 answers why-not bored, which isn't one of its values."]);
+  deepStrictEqual(refused(swap(B, "(why-not no-time)", "(why-ever no-time)")).map((x) => x.replace(/^\d+ /, "")), ["send p1 answers dim/why-ever itself, which isn't a declared dimension."]);
+  // and an :objections value the dimension doesn't declare
+  deepStrictEqual(
+    verdict(B, { facts: [...fs, { e: "dim/why-not", a: "dim/objections", v: kw("bored") }], history: hist }).findings.filter((f) => f.check === "value-declared").map((f) => f.message),
+    ["send p1 uses why-not bored, which it marks as an objection but doesn't declare.", "send p2 uses why-not bored, which it marks as an objection but doesn't declare."],
+  );
+});
+test("unmarked values never alarm, and nothing reserves the name objection", () => {
+  // the same paths with why-not's marks taken off: every answer is just an answer
+  const unmarked = (t: Triple) => t.a === "dim/objections";
+  deepStrictEqual(objections(W, [], unmarked), []);
+  // an :answers needs an objection, so with no marks the bridge's answers are refused instead
+  ok(verdict(B, { facts: fs.filter((t) => !unmarked(t)), history: hist }).findings.some((f) => f.check === "value-declared"));
+  // role marks none, and bf-02 varies by it
+  ok(!objections(F).length);
+  deepStrictEqual(fs.filter((t) => t.a === "dim/name").map((t) => String(t.v)).sort(), ["channel", "role", "why-not"]);
+  ok(!fs.some((t) => String(t.e) === "dim/objection"));
+});
+test("the printer round-trips :answers and (dimension …)", () => {
+  const r = readPath(W);
+  deepStrictEqual(r.problems, []);
+  deepStrictEqual(r.path?.states[0]?.sends.find((x) => x.key === "w2")?.answers, [{ dim: "why-not", value: "too-expensive" }]);
+  const two = swap(W, ":answers (why-not too-expensive)", ":answers ((why-not too-expensive)\n                (why-not no-time))");
+  const r2 = readPath(two);
+  ok(r2.path);
+  deepStrictEqual(r2.path?.states[0]?.sends.find((x) => x.key === "w2")?.answers, [{ dim: "why-not", value: "too-expensive" }, { dim: "why-not", value: "no-time" }]);
+  deepStrictEqual(printPath(r2.path), two);
+  deepStrictEqual(readPath(printPath(r2.path)).triples, r2.triples);
+  const d = readDimension(printDimension(WHY_NOT));
+  deepStrictEqual(d.problems, []);
+  deepStrictEqual(d.dimension, WHY_NOT);
+  // facts keep no order, so a dimension read from them prints its values sorted, the canonical form
+  deepStrictEqual(dimFromFacts("why-not", fs), { ...WHY_NOT, values: [...WHY_NOT.values].sort(), objections: [...WHY_NOT.objections].sort() });
+  const sorted = printDimension(dimFromFacts("why-not", fs)!);
+  deepStrictEqual(printDimension(readDimension(sorted).dimension!), sorted);
+  ok(readDimension("(dimension why-not (a b) :objections (c))").problems.some((x) => x.message === "objection c isn't one of the dimension's values"));
+});
+test("why-not answers from the survey are asked acts, counted by value", () => {
+  const acts = fs.filter((t) => t.a === "act/of" && t.v === "why-not").map((t) => String(t.e));
+  const get = (e: string, a: string) => fs.find((t) => t.e === e && t.a === a)?.v;
+  deepStrictEqual([...new Set(acts.map((e) => kwName(get(e, "act/source"))))], ["asked"]);
+  const by = new Map<string, number>();
+  for (const e of acts) by.set(kwName(get(e, "act/value")), (by.get(kwName(get(e, "act/value"))) ?? 0) + 1);
+  deepStrictEqual(Object.fromEntries([...by].sort()), { "didnt-see-it": 1, "no-time": 2, "too-expensive": 2 });
+});
 test("one uncertain delivery: uncertain-sends fires, and nothing retried it", () => {
   const ds = deliveriesOf(fs).filter((x) => x.status === "uncertain");
   deepStrictEqual(ds.map((x) => `${x.person} ${x.send} ${x.via}`), ["person/ana five-day-tools/day-5 email"]);
@@ -812,5 +889,5 @@ test("one uncertain delivery: uncertain-sends fires, and nothing retried it", ()
   deepStrictEqual(hist.filter((x) => x.a === "delivery/key" && x.added && x.v === "person/ana|five-day-tools/day-5|email").length, 1);
   deepStrictEqual(hist.filter((x) => x.e === "person/ana" && x.a === "send/sent" && x.v === "five-day-tools/day-5" && x.added).length, 1);
 });
-console.log(failed === 0 ? `${PACK.length + 63} checks passed` : `${failed} failed`);
+console.log(failed === 0 ? `${PACK.length + 72} checks passed` : `${failed} failed`);
 if (failed > 0) process.exit(1);

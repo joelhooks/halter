@@ -838,4 +838,42 @@ prop("no delivery of a :bonus send ever goes to someone with a bought act for th
   );
 });
 
+prop("objection-has-fix is quiet exactly when every objection value has a fix or proof :answers send", () => {
+  const db0 = seedDb();
+  const fs0 = facts(db0);
+  const hist0 = history(db0);
+  const bridge = fromFacts("small-tools-bridge", fs0);
+  if (!bridge) throw new Error("no bridge");
+  const VALUES = ["no-time", "too-expensive", "not-for-me", "didnt-see-it", "bought-elsewhere"];
+  const sendArb = fc.record({ job: fc.constantFrom("fix", "proof", "faq", "teach", "last-call"), answers: fc.subarray(VALUES, { maxLength: 3 }) });
+  fc.assert(
+    fc.property(fc.subarray(VALUES), fc.array(sendArb, { minLength: 3, maxLength: 3 }), (marked, picks) => {
+      // the pitch's three sends, re-jobbed and answering random values; a last-call keeps its deadline
+      const states = bridge.states.map((st) =>
+        st.name !== "pitch"
+          ? st
+          : {
+              ...st,
+              sends: st.sends.map((x, i) => {
+                const pk = picks[i]!;
+                const { answers: _a, deadline: _d, ...rest } = x;
+                return { ...rest, job: pk.job, ...(pk.job === "last-call" ? { deadline: "close" } : {}), ...(pk.answers.length ? { answers: pk.answers.map((value) => ({ dim: "why-not", value })) } : {}) };
+              }),
+            },
+      );
+      const p = { ...bridge, states };
+      const world = [...fs0.filter((t) => t.a !== "dim/objections"), ...marked.map((v) => ({ e: "dim/why-not", a: "dim/objections", v: Kw.of(v) }))];
+      const got = verdict(printPath(p), { facts: world, history: hist0 }).findings.filter((f) => f.check === "objection-has-fix").map((f) => f.message.split(" ")[2] ?? "").sort();
+      // the oracle: the path uses why-not when a send answers it; then each marked value needs a fix or proof that answers it
+      const sends = states.flatMap((st) => st.sends);
+      const uses = sends.some((x) => (x.answers ?? []).length > 0);
+      const want = uses ? marked.filter((o) => !sends.some((x) => (x.job === "fix" || x.job === "proof") && (x.answers ?? []).some((y) => y.value === o))).sort() : [];
+      deepStrictEqual(got, want, JSON.stringify({ marked, picks }));
+      // quiet exactly when nothing is missing
+      deepStrictEqual(got.length === 0, want.length === 0);
+    }),
+    { numRuns: Number(process.env.RUNS ?? 60) },
+  );
+});
+
 console.log(`${count} properties passed`);

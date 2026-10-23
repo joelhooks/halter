@@ -116,6 +116,21 @@ const renderAs = (n: Node, col: number, closes: number, width: number, hang: boo
     if (col + line.length + 3 + n.trailing.length <= width) return [{ indent: col, text: `${line} ; ${n.trailing}` }];
     return [...wrapComment(col, ";;", n.trailing, width), { indent: col, text: line }];
   }
+  // a data list of plain words, like a dimension's values, fills its lines the way prose does
+  if (n.head === "" && !hasComments(n) && n.items.length > 0 && n.items.every((x) => typeof x === "string" && !isKey(x))) {
+    const out: Array<Line> = [];
+    let cur = "(";
+    for (const w of n.items as ReadonlyArray<string>) {
+      const lead = out.length === 0 ? col : col + 1;
+      const next = cur === "(" || cur === "" ? `${cur}${w}` : `${cur} ${w}`;
+      if (cur !== "(" && cur !== "" && lead + next.length > width) {
+        out.push({ indent: lead, text: cur });
+        cur = w;
+      } else cur = next;
+    }
+    out.push({ indent: out.length === 0 ? col : col + 1, text: `${cur})${shut}` });
+    return out;
+  }
   const parts = partsOf(n);
   const call = BODY[n.head] === undefined;
   const lastIdx = parts.length - 1;

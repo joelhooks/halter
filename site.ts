@@ -10,14 +10,14 @@ import { facts, history, kw, ATTRS, type Tx, type Val } from "./src/db.ts";
 import { esc, highlight, highlightTs } from "./src/hl.ts";
 import { generateMachine, INTERPRETER, REGISTRY } from "./src/machine.ts";
 import { footnotesMd, newCtx, render, sectionOf, slugify, toMarkdown, type Ctx } from "./src/md.ts";
-import { fromFacts, type Path } from "./src/model.ts";
-import { duration, printPath } from "./src/printer.ts";
+import { dimFromFacts, fromFacts, type Path } from "./src/model.ts";
+import { duration, printDimension, printPath } from "./src/printer.ts";
 import { parseQuery, run, show } from "./src/query.ts";
 import { deliveryQueries, SAVED_QUERIES } from "./src/queries.ts";
 import { deliveriesOf } from "./src/delivery.ts";
 import { FEED } from "./src/feed.ts";
 import { SKILL_OF_CHECK, skillsFrom, type Skill } from "./src/skills.ts";
-import { AUTHORED, closeShift, HORIZON, PATHS, seedDb } from "./src/seed.ts";
+import { AUTHORED, closeShift, HORIZON, PATHS, seedDb, WHY_NOT } from "./src/seed.ts";
 import { interpret } from "./src/run.ts";
 import { transact } from "./src/db.ts";
 import { kwName, nameOf, personLog, sendCounts } from "./src/time.ts";
@@ -160,6 +160,29 @@ const personLogFig = (person: string, from: string, until: string): Fig => {
 
 // Teo's mid-run link fix to p1's email, the content story the delivery queries ask about.
 const linkFix = () => db.log.find((x) => x.who === "teo" && x.datoms.some((d) => d.e === "message/p1/email"))?.t ?? 0;
+// D42: the why-not dimension as printed from the facts, and its answers counted by value by a halter query.
+const WHY_NOT_ANSWERS = `(query "why-not-answers"
+  :doc "Every why-not answer, counted by value, and whether its author marked the value an objection."
+  :find (?value ?answers ?objection)
+  :where ((?d :dim/name "why-not") (?d :dim/values ?value)
+          (count ?answers ?a (?a :act/of "why-not") (?a :act/kind answered) (?a :act/value ?value))
+          (or (and (?d :dim/objections ?value) (= ?objection "yes"))
+              (and (not (?d :dim/objections ?value)) (= ?objection "no")))))`;
+const whyNotFig = (): Fig => {
+  const d = dimFromFacts("why-not", fs);
+  if (!d) throw new Error("the seed declares no why-not dimension");
+  const dim = printDimension(d).replace(/\n$/, "");
+  const query = parseQuery(WHY_NOT_ANSWERS);
+  const r = run(query, { facts: fs, history: hist });
+  if (!r.ok) throw new Error(r.error);
+  const rows = r.rows.map((x) => x.map(show));
+  return {
+    html: `${lispHtml(dim)}${lispHtml(fitSource(WHY_NOT_ANSWERS))}<div class="table-wrap"><table><thead><tr>${query.find.map((v) => `<th>${esc(v)}</th>`).join("")}</tr></thead><tbody>${rows
+      .map((x) => `<tr>${x.map((v) => `<td>${esc(v)}</td>`).join("")}</tr>`)
+      .join("")}</tbody></table></div>`,
+    md: `\`\`\`lisp\n${dim}\n\`\`\`\n\n\`\`\`lisp\n${fitSource(WHY_NOT_ANSWERS)}\n\`\`\`\n\n${mdTable(query.find, rows)}`,
+  };
+};
 const savedQueries = (): Fig => {
   const parts = [...SAVED_QUERIES, ...deliveryQueries(linkFix())].map(({ source, query }) => {
     const r = run(query, { facts: fs, history: hist });
@@ -187,7 +210,7 @@ const sourceCounts = (): Fig => {
   const authored = db.log.filter((tx) => tx.who !== "agent:halter");
   const by = (s: string) => db.log.filter((tx) => tx.source === s).length;
   const rows = [
-    ["asked", String(by("asked")), "they told us: the role survey import"],
+    ["asked", String(by("asked")), "they told us: the role survey import, profile answers, and replies to emails, the why-didnt-you-buy survey among them"],
     ["observed", String(by("observed")), `they did it: purchases and finished courses, plus ${db.log.length - authored.length} path events by agent:halter`],
     ["inferred", String(by("inferred")), "a rule worked it out: roles guessed from the signup page, rule role-from-signup-page"],
     ["assumed", String(by("assumed")), "someone believes it: every path edit, each quoting a person"],
@@ -271,6 +294,7 @@ const FIGS: Record<string, () => Fig> = {
     return { html: lispHtml(text), md: `\`\`\`lisp\n${text}\n\`\`\`` };
   },
   "feed-query": () => ({ html: lispHtml(fitSource(FEED)), md: `\`\`\`lisp\n${fitSource(FEED)}\n\`\`\`` }),
+  "why-not": () => whyNotFig(),
   "tx:bridge-move": () => example(db.log.find((x) => x.datoms.some((d) => d.a === "tx/move" && String(d.v).startsWith('(move "small-tools-bridge"')))?.t ?? 0),
   "tx:survey": () => example(db.log.find((x) => x.source === "asked")?.t ?? 0),
   sources: sourceCounts,
@@ -505,6 +529,13 @@ const useCases = (): ReadonlyArray<UseCase> => {
       excerpts: [pickForms("bf-2027", [[/\(send "bf-02"/, Infinity]], "bf-2027 vary")],
       checks: ["hard-from-inferred", "else-on-every-vary", "value-declared", "few-values"],
       live: ["/paths/bf-2027/", "Black Friday 2027"],
+    },
+    {
+      goal: "Answer the objections that matter",
+      say: "An objection is a kind of answer. A dimension marks which of its values are objections with `:objections`, and a send names the ones it answers with `:answers`. Each objection on a dimension a path uses needs a fix or proof send that answers it; a faq alone doesn't count. Values nobody marked never alarm.",
+      excerpts: [printDimension(WHY_NOT).replace(/\n$/, ""), pickForms("small-tools-bridge", [[/\(send "p1"/, Infinity], [/\(send "p2"/, Infinity]], "bridge answers")],
+      checks: ["objection-has-fix", "value-declared"],
+      live: ["/paths/why-didnt-you-buy/", "Why didn't you buy?"],
     },
     {
       goal: "Ask people who didn't buy why",
@@ -858,12 +889,22 @@ Even a broadcast is measured on the reader's result: \`(target (did? "shipped-to
     "why-didnt-you-buy",
     "The successor subscribes to the bridge's finished event and asks one question a day later.",
     "Why didn't you buy: a one-question survey path that enters when someone finishes the bridge without buying.",
-    "finished? small-tools-bridge\n  -> ask --24h--> w1 survey -> done\ntarget: did? shipped-tool, within 720h",
+    "finished? small-tools-bridge\n  -> ask --24h--> w1 survey\n         --72h--> w2 faq -> done\ntarget: did? shipped-tool, within 720h",
     `This path is how the bridge's hand-off works. The bridge doesn't name it. It enters on \`(finished? "small-tools-bridge")\`, and buyers never reach \`finished\`, so it only hears from people who didn't buy. [dunn-launch]
 
 {{fig:workspace:why-didnt-you-buy}}
 
 The \`post-close-survey\` check passes for the bridge because of this path: the check looks for any path that enters on the bridge finishing and has a survey send.
+
+## The answers
+
+"Why didn't you buy?" isn't a language feature. It's the copy of \`w1\`, a \`survey\` send, and the replies are \`answered\` acts on \`why-not\`, a dimension Mara declared on 1 June. She marked two of its five values \`:objections\`: "No time and the price are the two we can answer. Not for me, didn't see it and bought elsewhere we just listen to." A reply is \`:source asked\`, because the person told us. Ana and Dee each gave two answers, which \`:many\` allows, and Ben's one reply carried two acts: why he didn't buy, and the tool he shipped.^[A dimension read back from the facts prints its values sorted. The facts keep no order, so sorted is the canonical form.] [stb]
+
+{{fig:why-not}}
+
+- **The bridge answers both objections where they count.** \`p1\`, a fix send, has \`:answers (why-not no-time)\`, and \`p2\`, a proof send, has \`:answers (why-not too-expensive)\`, so \`objection-has-fix\` is quiet on [the bridge](/paths/small-tools-bridge/).
+- **This path answers the price only in a faq.** \`w2\` goes out two days after the survey with \`:answers (why-not too-expensive)\`, and nothing here answers \`no-time\`. A faq names an objection without fixing it, so \`objection-has-fix\` alarms for both on this page. [stb]
+- **Try it.** In the Edit tab, change \`w2\` to \`:job proof\` and the price alarm clears. Give it \`:answers ((why-not too-expensive) (why-not no-time))\` and both do. \`:answers (why-not didnt-see-it)\` is refused by \`value-declared\`: Mara didn't mark it, so there's nothing to answer.
 
 ## The target
 
@@ -912,9 +953,7 @@ Nobody waives their own alarm, person or agent (\`no-self-waiver\`). A waiver is
 
 ${pack().md}
 
-## Not built yet
-
-${UNBUILT.map((u) => `### ${u.name}\n\n**${u.severity}**, doctrine, not built. ${u.why} [${u.cites}]${skillLink(u.name)}`).join("\n\n")}`,
+${UNBUILT.length === 0 ? "" : `## Not built yet\n\n${UNBUILT.map((u) => `### ${u.name}\n\n**${u.severity}**, doctrine, not built. ${u.why} [${u.cites}]${skillLink(u.name)}`).join("\n\n")}`}`,
   },
   {
     slug: "/facts/",

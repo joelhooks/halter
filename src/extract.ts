@@ -14,6 +14,9 @@ import {
   isGroup,
   offerId,
   bonusId,
+  answersId,
+  type Answer,
+  type Dimension,
   SAFE,
   sendId,
   stateId,
@@ -48,6 +51,40 @@ const FORMS = ["offer", "enters-on", "hold", "state", "exit-on", "target", "guar
 
 const head = (f: Sexp | undefined) => (f?._tag === "List" && f.items[0]?._tag === "Sym" ? f.items[0].name : undefined);
 const kids = (f: Sexp | undefined): ReadonlyArray<Sexp> => (f?._tag === "List" ? f.items.slice(1) : []);
+
+// (dimension NAME (VALUE…) [:many] [:objections (VALUE…)]), the structure file's other top-level form.
+export const readDimension = (source: string): { readonly dimension: Dimension | undefined; readonly problems: ReadonlyArray<Problem> } => {
+  const r = read(source);
+  if (Result.isFailure(r)) return { dimension: undefined, problems: [r.failure] };
+  const f = r.success;
+  const problems: Array<Problem> = [];
+  const no = (at: number, message: string, hint?: string) => problems.push(hint === undefined ? { at, message } : { at, message, hint });
+  if (head(f) !== "dimension") {
+    no(f.at, "expected (dimension NAME (VALUE…) …)");
+    return { dimension: undefined, problems };
+  }
+  const items = kids(f);
+  const nm = items[0]?._tag === "Sym" ? items[0].name : undefined;
+  const syms = (x: Sexp | undefined, what: string): Array<string> => {
+    if (x?._tag !== "List" || !x.items.every((y) => y._tag === "Sym")) {
+      no(x?.at ?? f.at, `expected ${what} as a list of bare words`);
+      return [];
+    }
+    return x.items.flatMap((y) => (y._tag === "Sym" ? [y.name] : []));
+  };
+  const values = syms(items[1], "the values");
+  let many = false;
+  let objections: Array<string> = [];
+  for (let i = 2; i < items.length; i++) {
+    const x = items[i];
+    if (x?._tag === "Key" && x.name === "many") many = true;
+    else if (x?._tag === "Key" && x.name === "objections") objections = syms(items[++i], ":objections");
+    else no(x?.at ?? f.at, "a dimension takes its values, then :many and :objections (VALUE…)");
+  }
+  if (nm === undefined || !SAFE.test(nm)) no(f.at, "the dimension needs a name in plain lower-case letters, digits and dashes");
+  for (const o of objections) if (!values.includes(o)) no(f.at, `objection ${o} isn't one of the dimension's values`, `declare it in the values first: ${values.join(" ")}`);
+  return { dimension: nm === undefined ? undefined : { name: nm, values, many, objections }, problems };
+};
 
 export const readPath = (source: string): Extracted => {
   const problems: Array<Problem> = [];
@@ -347,7 +384,7 @@ export const readPath = (source: string): Extracted => {
           const xh = head(x);
           if (xh === "send") {
             const s = split(x);
-            only(s.keys, ["after", "on", "job", "via", "deadline", "bonus"], "send");
+            only(s.keys, ["after", "on", "job", "via", "deadline", "bonus", "answers"], "send");
             const key = name(s.pos[0], "the message id", x.at);
             if (key === undefined) continue;
             const e = sendId(id, key);
@@ -358,6 +395,22 @@ export const readPath = (source: string): Extracted => {
             const job = s.keys.has("job") ? sym(s.keys.get("job"), "job", x.at) : undefined;
             const deadline = s.keys.has("deadline") ? sym(s.keys.get("deadline"), "deadline", x.at) : undefined;
             const bonus = s.keys.has("bonus") ? name(s.keys.get("bonus"), "the :bonus product", x.at) : undefined;
+            // :answers (DIM VALUE), or a list of pairs ((DIM VALUE) (DIM VALUE)) (D42)
+            const answers: Array<Answer> = [];
+            const av = s.keys.get("answers");
+            if (av !== undefined) {
+              const pairsOf = av._tag === "List" && av.items[0]?._tag === "List" ? av.items : [av];
+              for (const pr of pairsOf) {
+                const dim = pr._tag === "List" && pr.items.length === 2 && pr.items[0]?._tag === "Sym" ? pr.items[0].name : undefined;
+                const value = pr._tag === "List" && pr.items[1]?._tag === "Sym" ? pr.items[1].name : undefined;
+                if (dim === undefined || value === undefined) {
+                  refuse(pr.at, "expected :answers (DIM VALUE) or a list of them", "e.g. :answers (why-not no-time)");
+                  continue;
+                }
+                mark(answersId(id, key, answers.length + 1), undefined, pr.at);
+                answers.push({ dim, value });
+              }
+            }
             const via = viaOf(s.keys.get("via"), key, x.at);
             if (via) via.channels.forEach((_, j) => mark(viaId(id, key, j + 1), undefined, s.keys.get("via")?.at));
             for (const [k, a] of [["after", "send/after"], ["on", "send/on"], ["job", "send/job"], ["via", "send/via-op"], ["deadline", "send/deadline"], ["bonus", "send/bonus"]] as const) mark(e, a, s.keys.get(k)?.at);
@@ -391,6 +444,7 @@ export const readPath = (source: string): Extracted => {
               ...(job === undefined ? {} : { job }),
               ...(deadline === undefined ? {} : { deadline }),
               ...(bonus === undefined ? {} : { bonus }),
+              ...(answers.length === 0 ? {} : { answers }),
               ...(vary === undefined ? {} : { vary }),
             });
           } else if (xh === "to") {
