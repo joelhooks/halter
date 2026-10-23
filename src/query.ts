@@ -33,7 +33,7 @@ export interface Source {
 }
 
 const UNIT_MS: Record<string, number> = { m: 60_000, h: 3_600_000, d: 86_400_000 };
-export const FNS = ["<", "<=", ">", ">=", "=", "!=", "in?", "between?", "within?", "+", "-", "day", "starts?", "agent?"];
+export const FNS = ["<", "<=", ">", ">=", "=", "!=", "in?", "between?", "within?", "+", "-", "day", "starts?", "ref?", "agent?"];
 
 const term = (f: Sexp): Term => {
   switch (f._tag) {
@@ -224,6 +224,11 @@ const call = (c: Extract<Clause, { tag: "call" }>, b: Binding): Array<Binding> =
       // (starts? ?ref ?path): a PATH/KEY reference belongs to that path
       const [x, p] = need(2) as [Val, Val];
       return keep(typeof x === "string" && typeof p === "string" && x.startsWith(`${p}/`));
+    }
+    case "ref?": {
+      // (ref? ?ref ?path ?key): a PATH/KEY reference names exactly that send
+      const [x, p, k] = need(3) as [Val, Val, Val];
+      return keep(typeof x === "string" && typeof p === "string" && typeof k === "string" && x === `${p}/${k}`);
     }
     case "agent?": {
       // (agent? ?who): the actor is agent:NAME (D37)

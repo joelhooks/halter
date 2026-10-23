@@ -796,4 +796,46 @@ prop("a refusal at run stops only the refused send for the person it names: nobo
   );
 });
 
+prop("no delivery of a :bonus send ever goes to someone with a bought act for that bonus from before the delivery", () => {
+  const base = seedDb();
+  const bonusSends = new Set((fromFacts("bf-2027", facts(base))?.states.flatMap((st) => st.sends) ?? []).filter((x) => x.bonus !== undefined).map((x) => `bf-2027/${x.key}`));
+  ok(bonusSends.size > 0, "bf-2027 has a bonus send");
+  const iso = (h: number) => `${new Date(Date.UTC(2027, 10, 25, 0) + h * H).toISOString().slice(0, 16)}Z`;
+  const buyer = fc.record({ buys: fc.option(fc.integer({ min: 0, max: 24 * 7 }), { nil: undefined }), refund: fc.option(fc.integer({ min: 1, max: 72 }), { nil: undefined }) });
+  fc.assert(
+    fc.property(fc.array(buyer, { minLength: 1, maxLength: 3 }), (people) => {
+      const inputs: Array<TxInput> = [];
+      people.forEach((x, i) => {
+        const e = `person/new${i}`;
+        inputs.push({ who: "adapter:site", at: "2027-11-20T09:00Z", source: "observed", why: 'Site: "joined Fernhill News"', ops: [
+          { e, a: "person/name", v: `New${i} Vale`, added: true },
+          { e, a: "person/email", v: `new${i}@example.org`, added: true },
+          { e, a: "person/lists", v: "list/fernhill-news", added: true },
+        ] });
+        if (x.buys === undefined) return;
+        const act = `act/new${i}-pack`;
+        const ops = (added: boolean): Array<Op> => [
+          { e: act, a: "act/person", v: e, added },
+          { e: act, a: "act/kind", v: Kw.of("bought"), added },
+          { e: act, a: "act/of", v: "template-pack", added },
+        ];
+        inputs.push({ who: "adapter:shop", at: iso(x.buys), source: "observed", why: 'Shop: "order, The Fernhill template pack"', ops: ops(true) });
+        if (x.refund !== undefined) inputs.push({ who: "adapter:shop", at: iso(x.buys + x.refund), source: "observed", why: 'Shop: "refund, The Fernhill template pack"', ops: ops(false) });
+      });
+      const d = interpret([...AUTHORED, ...inputs], HORIZON);
+      for (const y of deliveriesOf(facts(d)).filter((z) => bonusSends.has(z.send))) {
+        // the oracle: the facts just before the transaction that delivered it
+        const t = d.log.find((tx) => tx.datoms.some((z) => z.e === y.person && z.a === "send/sent" && z.v === y.send && z.added))?.t ?? 0;
+        const before = facts(asOf(d, t - 1));
+        const owns = before.some((f) => f.a === "act/of" && f.v === "template-pack" && before.some((g) => g.e === f.e && g.a === "act/person" && g.v === y.person) && before.some((g) => g.e === f.e && g.a === "act/kind" && String(g.v) === "bought"));
+        ok(!owns, `${y.person} owns the template pack and got ${y.send}`);
+      }
+      // and an owner who skipped it is named by a refusal
+      for (const f of facts(d).filter((z) => z.a === "send/skipped" && bonusSends.has(String(z.v)) && String(z.e).startsWith("person/new")))
+        ok(facts(d).some((g) => g.a === "refusal/person" && g.v === f.e), `${String(f.e)} skipped with no refusal`);
+    }),
+    { numRuns: Number(process.env.RUNS ?? 6) },
+  );
+});
+
 console.log(`${count} properties passed`);

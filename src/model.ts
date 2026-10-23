@@ -94,6 +94,8 @@ export interface Send {
   readonly on?: string;
   readonly job?: string;
   readonly deadline?: string;
+  // the bonus product this send offers (D41); every variant carries it
+  readonly bonus?: string;
   readonly vary?: Vary;
 }
 export interface To {
@@ -114,6 +116,12 @@ export interface Offer {
   readonly windowState?: string;
   readonly earlyBird?: string;
   readonly classStarts?: string;
+  // (bonus PRODUCT :until EVENT): extras that come with buying, until an offer event (D41)
+  readonly bonuses?: ReadonlyArray<Bonus>;
+}
+export interface Bonus {
+  readonly product: string;
+  readonly until: string;
 }
 export interface Pace {
   readonly rate: number;
@@ -159,6 +167,7 @@ export const offerId = (c: string) => `${c}/offer`;
 export const stateId = (c: string, name: string) => `${c}/state/${name}`;
 export const toId = (c: string, state: string, rank: number) => `${stateId(c, state)}/to/${rank}`;
 export const sendId = (c: string, key: string) => `${c}/send/${key}`;
+export const bonusId = (c: string, rank: number) => `${offerId(c)}/bonus/${rank}`;
 export const variantId = (c: string, key: string, rank: number) => `${sendId(c, key)}/vary/${rank}`;
 export const viaId = (c: string, key: string, rank: number) => `${sendId(c, key)}/via/${rank}`;
 export const guardId = (c: string, rank: number) => `${c}/guard/${rank}`;
@@ -222,6 +231,13 @@ export const toFacts = (m: Path): Array<Triple> => {
     put(o, "offer/window-state", m.offer.windowState === undefined ? undefined : kw(m.offer.windowState));
     put(o, "offer/early-bird-until", m.offer.earlyBird);
     put(o, "offer/class-starts", m.offer.classStarts);
+    (m.offer.bonuses ?? []).forEach((b, j) => {
+      const be = bonusId(c, j + 1);
+      put(be, "bonus/offer", o);
+      put(be, "bonus/rank", j + 1);
+      put(be, "bonus/product", b.product);
+      put(be, "bonus/until", kw(b.until));
+    });
   }
   let rank = 0;
   m.states.forEach((st, i) => {
@@ -239,6 +255,7 @@ export const toFacts = (m: Path): Array<Triple> => {
       put(e, "send/on", s.on);
       put(e, "send/after", s.after);
       put(e, "send/deadline", s.deadline === undefined ? undefined : kw(s.deadline));
+      put(e, "send/bonus", s.bonus);
       if (s.via) {
         put(e, "send/via-op", s.via.op === undefined ? undefined : kw(s.via.op));
         s.via.channels.forEach((ch, j) => {
@@ -385,12 +402,18 @@ export const fromFacts = (c: string, triples: ReadonlyArray<Triple>): Path | und
         ...opt("on", str(bag, "send/on")),
         ...opt("job", key(bag, "send/job")),
         ...opt("deadline", key(bag, "send/deadline")),
+        ...opt("bonus", str(bag, "send/bonus")),
         ...(dim === undefined ? {} : { vary: { dim, hard: one(bag, "send/vary-hard") === true, cases: vs, ...opt("else", str(bag, "send/vary-else")) } }),
       },
     });
   }
   byRank(sends);
   const o = bags.get(offerId(c));
+  const bonuses: Array<Bonus> = byRank(
+    [...bags.entries()]
+      .filter(([, bag]) => str(bag, "bonus/offer") === offerId(c))
+      .map(([, bag]) => ({ rank: num(bag, "bonus/rank") ?? 0, b: { product: str(bag, "bonus/product") ?? "", until: key(bag, "bonus/until") ?? "" } })),
+  ).map((x) => x.b);
   const offer: Offer | undefined = o
     ? {
         product: strip(str(o, "offer/product"), PRODUCT) ?? "",
@@ -400,6 +423,7 @@ export const fromFacts = (c: string, triples: ReadonlyArray<Triple>): Path | und
         ...opt("windowState", key(o, "offer/window-state")),
         ...opt("earlyBird", str(o, "offer/early-bird-until")),
         ...opt("classStarts", str(o, "offer/class-starts")),
+        ...(bonuses.length === 0 ? {} : { bonuses }),
       }
     : undefined;
   return {

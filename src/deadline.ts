@@ -1,5 +1,5 @@
 // A told deadline is locked (D38). A person is told event E when a sent delivery of a send whose :deadline
-// is E reaches them. The instant they were told is computed then, under the version they ran; a move that
+// is E reaches them, and a bonus's end when a sent delivery of a send offering it does (D41). The instant they were told is computed then, under the version they ran; a move that
 // would give anyone told a different instant is refused, whoever wrote it.
 import { msDate, dateMs, type Triple } from "./db.ts";
 import { PACK } from "./checks.ts";
@@ -8,9 +8,14 @@ import type { Path } from "./model.ts";
 
 // E's instant for one person: calendar events read the offer; a per-person close is the instant they
 // leave the window's state, entered at stateAt, by its earliest timed transition.
+// A bonus's deadline is its :until event's instant, so moving that event, or pointing :until at another, moves it.
+export const bonusEvent = (product: string) => `the ${product} bonus`;
 export const eventInstant = (p: Path | undefined, ev: string, state: string, stateAt: number): number | undefined => {
   const o = p?.offer;
   if (!o) return undefined;
+  const bonus = o.bonuses?.find((b) => bonusEvent(b.product) === ev);
+  if (bonus) return eventInstant(p, bonus.until, state, stateAt);
+  if (ev.startsWith("the ") && ev.endsWith(" bonus")) return undefined;
   if (ev === "early-bird") return o.earlyBird === undefined ? undefined : dateMs(o.earlyBird);
   if (ev === "class") return o.classStarts === undefined ? undefined : dateMs(o.classStarts);
   if (ev !== "close") return undefined;

@@ -50,6 +50,7 @@ const shared: Array<Op> = [
       ["fieldkit-c7", "Field Kit, Cohort 7", "cohort"],
       ["small-tools", "Small Tools, Shipped", "self-paced"],
       ["library", "The Fernhill library", "bundle"],
+      ["template-pack", "The Fernhill template pack", "bundle"],
     ] as const
   ).flatMap(([slug, name, k]) => [
     add(`product/${slug}`, "product/name", name),
@@ -252,7 +253,8 @@ const bf: Path = {
   id: "bf-2027",
   title: "Black Friday 2027",
   list: "fernhill-news",
-  offer: { product: "library", pricing: "library-bf-2027", opens: "2027-11-26T08:00Z", closes: "2027-11-30T07:59Z" },
+  // the template pack comes with the library until the sale closes (D41)
+  offer: { product: "library", pricing: "library-bf-2027", opens: "2027-11-26T08:00Z", closes: "2027-11-30T07:59Z", bonuses: [{ product: "template-pack", until: "close" }] },
   entersOn: { name: "and", kids: [onList, { name: "not", kids: [{ name: "bought?", arg: "library" }] }] },
   since: SINCE,
   holds: [],
@@ -266,6 +268,8 @@ const bf: Path = {
           vary: { dim: "role", hard: true, cases: [{ value: "podcaster", message: "bf-02-podcaster" }, { value: "writer", message: "bf-02-writer" }], else: "bf-02" },
         }),
         send("bf-03", { on: "2027-11-27T17:00Z" }, "proof"),
+        // the bonus in a send of its own, so someone who owns it misses only this one
+        send("bf-bonus", { on: "2027-11-29T09:00Z" }, "urgency", { deadline: "close", bonus: "template-pack" }),
         send("bf-04", { on: "2027-11-29T17:00Z" }, "urgency", { deadline: "close" }),
         send("bf-05", { on: "2027-11-30T02:00Z" }, "last-call", { deadline: "close" }),
         send("bf-06", { on: "2027-12-02T17:00Z" }, "survey"),
@@ -352,6 +356,7 @@ const SUBJECT: Readonly<Record<string, string>> = {
   "bf-02-podcaster": "The library, for podcasters",
   "bf-02-writer": "The library, for writers",
   "bf-03": "What's in the library",
+  "bf-bonus": "The template pack comes free until the sale ends",
   "bf-04": "The sale ends Monday",
   "bf-05": "Last hours of the sale",
   "bf-06": "One question about the sale",
@@ -455,6 +460,8 @@ export const AUTHORED: ReadonlyArray<TxInput> = [
   tx("teo", "2027-11-15T10:00Z", "assumed", 'Teo: "Re-save the imported completions through the new adapter, so they lose the old platform\'s ids."', cleanup),
   tx("adapter:site", "2027-11-16T15:00Z", "observed", SIGNUP, signup("ben", "cy")),
   tx("adapter:shop", "2027-11-23T12:00Z", "observed", 'Shop: "order 2210, Small Tools, Shipped"', bought("cy", "small-tools")),
+  // D41: Gus bought the template pack on its own in August, so Black Friday's bonus send isn't for him
+  tx("adapter:shop", "2027-08-12T11:00Z", "observed", 'Shop: "order 2117, The Fernhill template pack"', bought("gus", "template-pack")),
   tx("adapter:site", "2027-11-20T14:00Z", "observed", SIGNUP, signup("dee", "eli")),
   // Acts and buys that the targets measure. Asked: a person told us. Observed: we saw it. Inferred: a guess, which never counts.
   tx("adapter:shop", "2027-03-10T14:00Z", "observed", 'Shop: "order 1203, Field Kit, Cohort 7"', bought("hal", "fieldkit-c7")),

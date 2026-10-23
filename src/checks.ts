@@ -62,6 +62,11 @@ export const SHAPE = [
   :say "send {?k} has :deadline {?d}. A deadline names close, early-bird or class."
   :at (?s :send/deadline)
   :where ((?s :send/path ?c) (?s :send/key ?k) (?s :send/deadline ?d) (not (in? ?d close early-bird class))))`,
+  `(check "bonus-declared" :severity refuse
+  :say "send {?k} offers bonus {?b}, which {?c}'s offer doesn't declare. Add (bonus \\"{?b}\\" :until close) to the offer, or drop :bonus."
+  :at (?s :send/bonus)
+  :where ((?s :send/path ?c) (?s :send/key ?k) (?s :send/bonus ?b)
+          (not (?o :offer/path ?c) (?x :bonus/offer ?o) (?x :bonus/product ?b))))`,
   `(check "job-on-every-send" :severity refuse
   :say "send {?k} has :job {?j}. {?near}The jobs are ${JOB_LIST}."
   :at (?s :send/job)
@@ -158,6 +163,16 @@ export const DOCTRINE = [
                  (?a :act/of ?dn) (?a :act/kind answered) (?a :act/value ?val) (?a :act/source inferred) (?a :act/person ?p) (?a :act/at ?t)
                  (not (?b :act/person ?p) (?b :act/kind answered) (?b :act/of ?dn) (?b :act/at ?u) (> ?u ?t)))
           (> ?n 0)))`,
+  `(check "bonus-to-owner" :severity refuse :cites (dunn-bridge)
+  :say "send {?k} offers {?b}, which {?n} people already own. They skip it at run (D40). Keep the bonus in its own send."
+  :at (?s :send/bonus)
+  :where ((?s :send/path ?c) (?s :send/key ?k) (?s :send/bonus ?b)
+          (count ?n ?p (?a :act/kind bought) (?a :act/of ?b) (?a :act/person ?p)
+                 (?p :path/at ?st) (starts? ?st ?c)
+                 (not (?p :send/sent ?m) (ref? ?m ?c ?k))
+                 (not (?p :send/skipped ?m) (ref? ?m ?c ?k))
+                 (not (?p :send/missed ?m) (ref? ?m ?c ?k)))
+          (> ?n 0)))`,
   `(check "synthetic-live" :severity refuse :cites (bc-gates)
   :say "synthetic person {?who} is on {?l}, which {?c} sends to. Synthetic people only run in simulations."
   :at (?c :path/list)
@@ -230,7 +245,6 @@ export const DOCTRINE = [
 
 // Doctrine checks LANGUAGE.md lists that this sketch doesn't build yet, and why.
 export const UNBUILT: ReadonlyArray<{ readonly name: string; readonly severity: "refuse" | "alarm"; readonly cites: string; readonly why: string }> = [
-  { name: "bonus-to-owner", severity: "refuse", cites: "dunn-bridge", why: "0.2 has no bonus form on an offer yet, so there is nothing to match." },
   { name: "objection-has-fix", severity: "alarm", cites: "stb", why: "claims, proof and objections aren't facts in this sketch yet." },
 ];
 

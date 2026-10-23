@@ -81,6 +81,17 @@ const PLANTED: Record<string, { readonly src: string; readonly extra?: ReadonlyA
     ],
   },
   "synthetic-live": { src: swap(B, ':list "fernhill-news"', ':list "fernhill-test"') },
+  "bonus-declared": { src: swap(F, ':bonus "template-pack"', ':bonus "sticker-pack"') },
+  // someone still in the sale who already owns the template pack, with the bonus send ahead of them
+  "bonus-to-owner": {
+    src: F,
+    extra: [
+      { e: "person/zed", a: "path/at", v: "bf-2027/sale" },
+      { e: "act/plant-bonus", a: "act/person", v: "person/zed" },
+      { e: "act/plant-bonus", a: "act/kind", v: kw("bought") },
+      { e: "act/plant-bonus", a: "act/of", v: "template-pack" },
+    ],
+  },
   "teach-before-fix": { src: swap(B, "  (waive teach-before-fix)", "").replace(/\n\)$/, ")").replace(/\(pace \(rate 150\)\)\n\)/, "(pace (rate 150)))") },
   "bridge-announces-pitch": { src: swap(B, ":job announce-pitch", ":job dream") },
   "rest-days": { src: swap(C, '"c7-06" :on "2027-03-08T17:00Z"', '"c7-06" :on "2027-03-03T17:00Z"') },
@@ -205,8 +216,8 @@ test("another actor's waiver counts at once, and history keeps both asserts", ()
   const w = fv(db)?.waived;
   ok(w !== undefined && w !== "staged" && w.counts && w.who === "agent:judge" && w.pending === undefined, JSON.stringify(w));
   deepStrictEqual(hist.filter((d) => d.e === "bf-2027" && d.a === "path/waives" && d.v === "few-values" && d.added).length, 2);
-  // the only live alarms are the two refusals at run (D40)
-  deepStrictEqual(at(db, "bf-2027").alarms, 2);
+  // the only live alarms are the three refusals at run (D40, D41)
+  deepStrictEqual(at(db, "bf-2027").alarms, 3);
   // agent:judge waived Mara's teach-before-fix on bf-2027 by rule, and it counted in that same transaction
   const judged = db.log.find((x) => x.who === "agent:judge" && x.datoms.some((d) => d.a === "path/waives" && d.v === "teach-before-fix"))?.t ?? 0;
   ok(counts(finding(asOf(db, judged), "bf-2027", "teach-before-fix")?.waived));
@@ -455,10 +466,10 @@ const mark = (d: Db, ops: Array<Op>, at = "2028-03-16T09:00Z") => {
 };
 test("the feed lists only agent transactions after the cursor and on that path", () => {
   const f = feedOf(db, BF, "mara");
-  ok(f.cursor !== undefined && f.txs.length === 6, JSON.stringify(f.txs.map((x) => x.t)));
+  ok(f.cursor !== undefined && f.txs.length === 7, JSON.stringify(f.txs.map((x) => x.t)));
   for (const tx of f.txs) ok(tx.t > (f.cursor ?? 0) && tx.who.startsWith("agent:") && (tx.who === "agent:halter" ? refusedOn(tx, BF) : touchesFeed(tx, BF, messagesOf(db, BF))), `t=${tx.t}`);
-  // the interpreter shows up only for its two refusals at run (D40)
-  deepStrictEqual(f.txs.map((x) => x.who), ["agent:judge", "agent:drafter", "agent:drafter", "agent:judge", "agent:halter", "agent:halter"]);
+  // the interpreter shows up only for its three refusals at run (D40)
+  deepStrictEqual(f.txs.map((x) => x.who), ["agent:judge", "agent:drafter", "agent:drafter", "agent:judge", "agent:halter", "agent:halter", "agent:halter"]);
   deepStrictEqual(feedOf(db, "small-tools-bridge", "mara").txs, [], "bf's guard names the bridge but doesn't touch it");
 });
 test("a person's transaction never appears", () => {
@@ -514,7 +525,8 @@ const attempt = (x: TxInput): string => {
 };
 test("extending a calendar close after a last-call delivery is refused", () => {
   const r = attempt(closeShift(db, { hours: 48 }));
-  deepStrictEqual(r, "refused: deadline-kept: 5 people were told close is 2027-11-30T07:59Z. It can't move to 2027-12-02T07:59Z. Make a new offer and announce it.");
+  // the bonus send told its four readers when the template pack ends, the same close (D41)
+  deepStrictEqual(r, "refused: deadline-kept: 5 people were told close is 2027-11-30T07:59Z. It can't move to 2027-12-02T07:59Z. Make a new offer and announce it. 4 people were told the template-pack bonus is 2027-11-30T07:59Z. It can't move to 2027-12-02T07:59Z. Make a new offer and announce it.");
 });
 test("closing earlier is refused too", () => {
   ok(/^refused: deadline-kept: 5 people were told close is 2027-11-30T07:59Z\. It can't move to 2027-11-30T05:59Z\./.test(attempt(closeShift(db, { hours: -2 }))));
@@ -639,7 +651,8 @@ test(":since lets an older act in", () => {
 });
 test("a re-buy after a refund is a new act, and it's fresh", () => {
   const buys = (d: Db) => history(d).filter((x) => x.a === "act/person" && x.v === "person/gus" && x.added).map((x) => String(x.e)).filter((e, i, a) => a.indexOf(e) === i);
-  const kinds = buys(db).filter((e) => fs.some((f) => f.e === e && f.a === "act/kind" && String(f.v) === "bought") || history(db).some((x) => x.e === e && x.a === "act/kind" && String(x.v) === "bought"));
+  // his Small Tools purchases; the template pack in August is its own act (D41)
+  const kinds = buys(db).filter((e) => history(db).some((x) => x.e === e && x.a === "act/of" && x.v === "small-tools")).filter((e) => fs.some((f) => f.e === e && f.a === "act/kind" && String(f.v) === "bought") || history(db).some((x) => x.e === e && x.a === "act/kind" && String(x.v) === "bought"));
   deepStrictEqual(kinds.length, 2, "two purchase acts");
   const [first, second] = kinds as [string, string];
   ok(!fs.some((f) => f.e === first), "the refunded purchase has no facts left");
@@ -674,15 +687,15 @@ test("a fix to one rendition leaves the other rendition's version alone", () => 
 // D40: a refusal that turns true mid-run stops only that send, and only for the people it names.
 const refusals = (d: Db) => facts(d).filter((f) => f.a === "refusal/outcome").map((f) => `${String(f.e)} ${kwName(f.v)}`).sort();
 test("refused at run: Jo's guessed role gets the else, Quin's bf-06 skips, and nobody else changes", () => {
-  deepStrictEqual(refusals(db), ["refusal/jo/bf-2027/bf-02/hard-from-inferred else", "refusal/quin/bf-2027/bf-06/synthetic-live skipped"]);
+  deepStrictEqual(refusals(db), ["refusal/gus/bf-2027/bf-bonus/bonus-to-owner skipped", "refusal/jo/bf-2027/bf-02/hard-from-inferred else", "refusal/quin/bf-2027/bf-06/synthetic-live skipped"]);
   const ds = deliveriesOf(fs).filter((d) => d.send.startsWith("bf-2027/"));
-  deepStrictEqual(ds.filter((d) => d.person === "person/jo").map((d) => `${d.send.slice(8)} ${d.message}`), ["bf-02 bf-02", "bf-03 bf-03", "bf-04 bf-04", "bf-05 bf-05", "bf-06 bf-06"]);
+  deepStrictEqual(ds.filter((d) => d.person === "person/jo").map((d) => `${d.send.slice(8)} ${d.message}`), ["bf-02 bf-02", "bf-03 bf-03", "bf-04 bf-04", "bf-05 bf-05", "bf-06 bf-06", "bf-bonus bf-bonus"]);
   // Ana's role was asked, so she gets her variant as written
   deepStrictEqual(ds.find((d) => d.person === "person/ana" && d.send === "bf-2027/bf-02")?.message, "bf-02-podcaster");
   ok(!ds.some((d) => d.person === "person/quin" && d.send === "bf-2027/bf-06"));
   ok(fs.some((f) => f.e === "person/quin" && f.a === "send/skipped" && f.v === "bf-2027/bf-06"));
-  ok(db.log.some((x) => x.who === "agent:halter" && x.why.includes("bf-06 skipped, refused at run: synthetic-live")));
-  ok(db.log.some((x) => x.who === "agent:halter" && x.why.includes("bf-02 refused at run: hard-from-inferred") && x.why.includes("its else, bf-02, went out")));
+  ok(db.log.some((x) => x.who === "agent:halter" && x.why.includes("bf-06 skipped at run: refused: synthetic-live")));
+  ok(db.log.some((x) => x.who === "agent:halter" && x.why.includes("bf-02 at run: refused: hard-from-inferred") && x.why.includes("its else, bf-02, went out")));
   // every send skipped for Quin, and she still passes (D34)
   ok(fs.some((f) => f.e === "person/quin" && f.a === "path/passed" && f.v === "bf-2027"));
 });
@@ -690,6 +703,7 @@ test("refused at run: the alarm names the check and the send, the world raised i
   const v = verdict(text("bf-2027"), { facts: fs, history: hist });
   const as = v.findings.filter((f) => f.check === "refused-at-run");
   deepStrictEqual(as.map((f) => f.message).sort(), [
+    "1 people in bf-2027 hit bonus-to-owner mid-run. Their bf-bonus fell back to its else, or was skipped. Fix the cause.",
     "1 people in bf-2027 hit hard-from-inferred mid-run. Their bf-02 fell back to its else, or was skipped. Fix the cause.",
     "1 people in bf-2027 hit synthetic-live mid-run. Their bf-06 fell back to its else, or was skipped. Fix the cause.",
   ]);
@@ -727,6 +741,68 @@ test("a page counts a refusal only when its version was committed with it: Jo's 
   deepStrictEqual(page?.findings.filter((f) => f.check === "hard-from-inferred").map((f) => f.standing), ["at-run"]);
   ok(page?.ok);
 });
+// D41: bonuses the language can see.
+const BONUS_SEND = '(send "bf-bonus" :on "2027-11-29T09:00Z"\n      :job urgency\n      :via email\n      :deadline close\n      :bonus "template-pack")';
+const BONUS = '(bonus "template-pack" :until close)';
+test("bonus and :bonus print and read back", () => {
+  const t = text("bf-2027");
+  ok(t.includes(BONUS) && t.includes(BONUS_SEND), t.slice(0, 600));
+  const r = readPath(t);
+  deepStrictEqual(r.problems, []);
+  ok(r.path);
+  deepStrictEqual(r.path?.offer?.bonuses, [{ product: "template-pack", until: "close" }]);
+  deepStrictEqual(r.path?.states[0]?.sends.find((x) => x.key === "bf-bonus")?.bonus, "template-pack");
+  deepStrictEqual(printPath(r.path), t);
+  deepStrictEqual(toFacts(r.path).filter((x) => x.a.startsWith("bonus/") || x.a === "send/bonus").length, 5);
+});
+test("an undeclared :bonus is refused by bonus-declared, and declaring it clears it", () => {
+  const without = text("bf-2027").replace(`\n    ${BONUS})`, ")");
+  ok(!without.includes("(bonus "), without.slice(0, 300));
+  const v = verdict(without, { facts: fs, history: hist });
+  deepStrictEqual(v.findings.filter((f) => f.check === "bonus-declared").map((f) => f.message), [
+    `send bf-bonus offers bonus template-pack, which bf-2027's offer doesn't declare. Add (bonus "template-pack" :until close) to the offer, or drop :bonus.`,
+  ]);
+  ok(!verdict(text("bf-2027"), { facts: fs, history: hist }).findings.some((f) => f.check === "bonus-declared"));
+});
+test("a bonus :until that names no event of the offer is refused by the reader", () => {
+  for (const ev of ["class", "early-bird", "soon"]) {
+    const r = readPath(text("bf-2027").replace(BONUS, `(bonus "template-pack" :until ${ev})`));
+    ok(r.problems.some((x) => x.message.includes(`bonus template-pack lasts :until ${ev}, which this offer doesn't have`)), `${ev}: ${JSON.stringify(r.problems)}`);
+  }
+  ok(readPath(text("bf-2027").replace(BONUS, '(bonus "template-pack")')).problems.length > 0, "a bonus needs :until");
+});
+test("an owner skips the bonus send and nothing else", () => {
+  const gus = deliveriesOf(fs).filter((d) => d.person === "person/gus" && d.send.startsWith("bf-2027/")).map((d) => d.send.slice(8));
+  deepStrictEqual(gus, ["bf-01", "bf-02", "bf-03", "bf-04", "bf-05", "bf-06"]);
+  ok(fs.some((f) => f.e === "person/gus" && f.a === "send/skipped" && f.v === "bf-2027/bf-bonus"));
+  ok(db.log.some((x) => x.who === "agent:halter" && x.why === "bf-2027: bf-bonus skipped at run: refused: bonus-to-owner, Gus owns template-pack"));
+  // owners of nothing get it as written
+  ok(deliveriesOf(fs).some((d) => d.person === "person/ana" && d.send === "bf-2027/bf-bonus" && d.message === "bf-bonus"));
+});
+test("a commit that adds a bonus send ahead of an owner is refused", () => {
+  const t = db.log.filter((x) => x.at <= "2027-11-28T00:00Z").at(-1)?.t ?? 0;
+  const d = asOf(db, t);
+  ok(facts(d).some((f) => f.e === "person/gus" && f.a === "path/at" && f.v === "bf-2027/sale"), "Gus is in the sale");
+  const head = viewAt(db, "bf-2027", t).verdict;
+  const p = fromFacts("bf-2027", facts(d));
+  ok(p && head);
+  const draft = printPath(p).replace('"bf-04" :on "2027-11-29T17:00Z"\n      :job urgency\n      :via email\n      :deadline close)', '"bf-04" :on "2027-11-29T17:00Z"\n      :job urgency\n      :via email\n      :deadline close\n      :bonus "template-pack")');
+  ok(draft.includes(':deadline close\n      :bonus "template-pack")\n    (send "bf-05"'), "the edit landed");
+  const v = judge(verdict(draft, { facts: facts(d), history: history(d) }), refusalKeys(head), "commit");
+  ok(!v.ok);
+  deepStrictEqual(v.findings.filter((f) => f.severity === "refuse" && f.standing === undefined).map((f) => f.message), [
+    "send bf-04 offers template-pack, which 1 people already own. They skip it at run (D40). Keep the bonus in its own send.",
+  ]);
+  // the bonus send already there is the head's: Gus will skip it at run, and it doesn't refuse the edit
+  ok(v.findings.some((f) => f.check === "bonus-to-owner" && f.standing === "before" && f.message.startsWith("send bf-bonus")));
+});
+test("deadline-kept covers a bonus's :until: moving it after a bonus send told someone is refused", () => {
+  const r = attempt(closeShift(db, { hours: -2 }));
+  ok(r.includes("people were told the template-pack bonus is 2027-11-30T07:59Z. It can't move to 2027-11-30T05:59Z."), r);
+  // before the bonus send went out, nobody was told it, and only :deadline close's readers are locked
+  const early = attempt(closeShift(db, { hours: 48, at: "2027-11-28T00:00Z" }));
+  deepStrictEqual(early, "accepted");
+});
 test("one uncertain delivery: uncertain-sends fires, and nothing retried it", () => {
   const ds = deliveriesOf(fs).filter((x) => x.status === "uncertain");
   deepStrictEqual(ds.map((x) => `${x.person} ${x.send} ${x.via}`), ["person/ana five-day-tools/day-5 email"]);
@@ -736,5 +812,5 @@ test("one uncertain delivery: uncertain-sends fires, and nothing retried it", ()
   deepStrictEqual(hist.filter((x) => x.a === "delivery/key" && x.added && x.v === "person/ana|five-day-tools/day-5|email").length, 1);
   deepStrictEqual(hist.filter((x) => x.e === "person/ana" && x.a === "send/sent" && x.v === "five-day-tools/day-5" && x.added).length, 1);
 });
-console.log(failed === 0 ? `${PACK.length + 57} checks passed` : `${failed} failed`);
+console.log(failed === 0 ? `${PACK.length + 63} checks passed` : `${failed} failed`);
 if (failed > 0) process.exit(1);

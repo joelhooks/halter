@@ -35,7 +35,7 @@ export interface View {
 export const messageIds = (p: Path): Array<string> => [
   ...new Set(allSends(p).flatMap((s) => [s.key, ...(s.vary?.cases.map((c) => c.message) ?? []), ...(s.vary?.else === undefined ? [] : [s.vary.else])])),
 ];
-// What the commit that made a version was judged on: the path's refusals as of that transaction (D40).
+// What the commit that made a version answers for: the refusals it added (D40).
 const atCommit = new WeakMap<Db, Map<string, ReadonlySet<string>>>();
 const commitBaseline = (db: Db, id: string, d: Db): ReadonlySet<string> => {
   const ver = currentVersion(history(d), id);
@@ -44,9 +44,15 @@ const commitBaseline = (db: Db, id: string, d: Db): ReadonlySet<string> => {
   atCommit.set(db, m);
   const hit = m.get(`${id}@${ver}`);
   if (hit) return hit;
-  const d0 = asOf(db, ver);
-  const p0 = fromFacts(id, facts(d0));
-  const keys = p0 ? refusalKeys(verdict(printPath(p0), { facts: facts(d0), history: history(d0) })) : new Set<string>();
+  // the refusals that commit added: there after it, not in the transaction before it (D40). Anything else
+  // came from an earlier commit or from the world, and is true at run.
+  const at = (t: number) => {
+    const d0 = asOf(db, t);
+    const p0 = fromFacts(id, facts(d0));
+    return p0 ? refusalKeys(verdict(printPath(p0), { facts: facts(d0), history: history(d0) })) : new Set<string>();
+  };
+  const before = at(ver - 1);
+  const keys = new Set([...at(ver)].filter((k) => !before.has(k)));
   m.set(`${id}@${ver}`, keys);
   return keys;
 };

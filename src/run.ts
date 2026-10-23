@@ -10,7 +10,7 @@ import { asOf, basis, dateMs, empty, facts, history, Kw, kw, moveText, msDate, t
 import { isStructure, versionId } from "./version.ts";
 import { MESSAGE, renditionId } from "./content.ts";
 import { deliveryOps } from "./delivery.ts";
-import { deadlineRefusal, eventInstant, type Broken } from "./deadline.ts";
+import { bonusEvent, deadlineRefusal, eventInstant, type Broken } from "./deadline.ts";
 import { fromFacts, type Path, type Send } from "./model.ts";
 import { answer, holds, latestAnswer, people, type World } from "./pred.ts";
 import { printAction, printPred, printVia, duration } from "./printer.ts";
@@ -21,12 +21,17 @@ export const HALTER = "agent:halter";
 // mid-run with no commit behind it, so the decision asks before every send: is a refusal true for this
 // person and this message? Pure: the same answer the property checks against.
 export interface RunRefusal {
-  readonly check: "hard-from-inferred" | "synthetic-live";
+  readonly check: "hard-from-inferred" | "synthetic-live" | "bonus-to-owner";
   readonly why: string;
 }
 const firstName = (w: World, person: string) => String(w.facts.find((f) => f.e === person && f.a === "person/name")?.v ?? person.replace(/^person\//, "")).split(" ")[0] ?? person;
+// Owning a bonus is a bought act for its product (D39, D41); a refund retracts the act.
+export const ownsBonus = (w: World, person: string, product: string): boolean =>
+  w.facts.some((f) => f.a === "act/kind" && f.v instanceof Kw && f.v.name === "bought" && w.facts.some((g) => g.e === f.e && g.a === "act/of" && g.v === product) && w.facts.some((g) => g.e === f.e && g.a === "act/person" && g.v === person));
 export const refusalAt = (s: Send, person: string, message: string, w: World): RunRefusal | undefined => {
   if (w.facts.some((f) => f.e === person && f.a === "person/synthetic" && f.v === true)) return { check: "synthetic-live", why: `${firstName(w, person)} is synthetic` };
+  // every variant carries the send's bonus, so an owner's else trips it too and the whole send skips (D41)
+  if (s.bonus !== undefined && ownsBonus(w, person, s.bonus)) return { check: "bonus-to-owner", why: `${firstName(w, person)} owns ${s.bonus}` };
   const v = s.vary;
   // a :hard variant states who the person is; stating an inferred value is the harm, so the else is safe
   if (v?.hard && message !== v.else && v.cases.some((c) => c.message === message)) {
@@ -432,7 +437,7 @@ export const interpret = (authored: ReadonlyArray<TxInput>, horizon: string, opt
         if (refused && fallback === undefined) {
           r.handled.add(t.send.key);
           r.lastAt = now;
-          note(r.path, `${r.path}: ${t.send.key} skipped, refused at run: ${refused.check}, ${refused.why}`, [add(r.person, "send/skipped", ref), ...refusalOps(r.person, ref, t.send.key, refused, "skipped")]);
+          note(r.path, `${r.path}: ${t.send.key} skipped at run: refused: ${refused.check}, ${refused.why}`, [add(r.person, "send/skipped", ref), ...refusalOps(r.person, ref, t.send.key, refused, "skipped")]);
           continue;
         }
         const holdEnd = Math.max(...p.holds.map((h) => dateMs(h) ?? 0).filter((h) => h > now), -Infinity);
@@ -464,13 +469,15 @@ export const interpret = (authored: ReadonlyArray<TxInput>, horizon: string, opt
             return ops;
           });
           // a deadline send that went out tells this person its instant, under the version they run now
-          if (t.send.deadline) {
-            const at = eventInstant(runPath(r), t.send.deadline, r.state, r.stateAt);
-            if (at !== undefined && !r.told?.has(t.send.deadline)) r.told = new Map([...(r.told ?? []), [t.send.deadline, at]]);
+          // and a bonus send tells them when its bonus ends, its :until event (D41)
+          for (const ev of [t.send.deadline, t.send.bonus === undefined ? undefined : bonusEvent(t.send.bonus)]) {
+            if (ev === undefined) continue;
+            const at = eventInstant(runPath(r), ev, r.state, r.stateAt);
+            if (at !== undefined && !r.told?.has(ev)) r.told = new Map([...(r.told ?? []), [ev, at]]);
           }
           const sentOps = [add(r.person, "send/sent", ref), ...receipts, ...(typeof page === "string" ? [add(r.person, "person/access", page)] : [])];
           if (refused && fallback !== undefined)
-            note(r.path, `${r.path}: ${t.send.key} refused at run: ${refused.check}, ${refused.why}; its else, ${fallback}, went out. ${how}`, [...sentOps, ...refusalOps(r.person, ref, t.send.key, refused, "else")]);
+            note(r.path, `${r.path}: ${t.send.key} at run: refused: ${refused.check}, ${refused.why}; its else, ${fallback}, went out. ${how}`, [...sentOps, ...refusalOps(r.person, ref, t.send.key, refused, "else")]);
           else note(r.path, `${r.path}: ${how}`, sentOps);
         }
       }

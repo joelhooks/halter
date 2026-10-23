@@ -160,6 +160,35 @@ await test("Mark seen moves the cursor and empties the feed (D37)", async () => 
   );
 });
 
+// D41: a :bonus the offer doesn't declare is refused in the editor, and declaring it clears the refusal.
+const stickers = (m: Model) =>
+  draftText(m).replace('      :via email\n      :deadline close)\n    (send "bf-05"', '      :via email\n      :deadline close\n      :bonus "sticker-pack")\n    (send "bf-05"');
+const declared = (m: Model) => stickers(m).replace('(bonus "template-pack" :until close))', '(bonus "template-pack" :until close)\n    (bonus "sticker-pack" :until close))');
+const giveStickers = 'Mara: "Throw in the sticker pack too."';
+await test("a :bonus the offer doesn't declare is refused, and declaring it clears it (D41)", async () => {
+  const m = at("bf-2027", HEAD, { tab: "Edit" });
+  if (!stickers(m).includes(':bonus "sticker-pack"') || !declared(m).includes('(bonus "sticker-pack" :until close)')) throw new Error("the edits didn't land");
+  const result = await interpreted(m, [Message.UpdatedDraft({ text: declared(m) }), Message.UpdatedWhy({ value: giveStickers }), Message.ClickedCommit({ kind: "plain" })]);
+  scene(
+    program,
+    given(m),
+    type(selector("textarea.lisp-edit"), stickers(m)),
+    type(selector("label.why input"), giveStickers),
+    expect(text("bonus-declared")).toExist(),
+    expect(text("send bf-04 offers bonus sticker-pack, which bf-2027's offer doesn't declare.", { exact: false })).toExist(),
+    click(role("button", { name: "Commit" })),
+    Command.expectNone(),
+    expect(text("Nothing committed: refused: bonus-declared:", { exact: false })).toExist(),
+    expect(selector("input.slider")).toHaveAttr("max", String(db.log.length)),
+    type(selector("textarea.lisp-edit"), declared(m)),
+    expect(text("bonus-declared")).not.toExist(),
+    click(role("button", { name: "Commit" })),
+    expect(text("Running the interpreter from your edit…")).toExist(),
+    Command.resolve(RunInterpreter, result),
+    expect(text("Committed t=", { exact: false })).toExist(),
+  );
+});
+
 console.log(failed === 0 ? `${passed} scenes passed` : `${failed} failed`);
 if (failed) {
   process.exitCode = 1;

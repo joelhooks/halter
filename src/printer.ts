@@ -37,6 +37,7 @@ const sendNode = (s: Send): Form => {
       ["job", s.job],
       ["via", s.via === undefined ? undefined : viaNode(s.via)],
       ["deadline", s.deadline],
+      ["bonus", s.bonus === undefined ? undefined : q(s.bonus)],
     ]),
     v && form("vary", [v.dim, v.hard && ":hard", ...v.cases.map((c) => form(c.value, [q(c.message)])), v.else !== undefined && form("else", [q(v.else)])]),
   ]);
@@ -83,6 +84,7 @@ export const pathNode = (m: Path, notes: Notes = {}): Form => {
             ),
         o.earlyBird !== undefined && form("early-bird", pairs([["until", q(o.earlyBird)]])),
         o.classStarts !== undefined && form("class", pairs([["starts", q(o.classStarts)]])),
+        ...(o.bonuses ?? []).map((b) => form("bonus", [q(b.product), ...pairs([["until", b.until]])])),
       ]),
     m.entersOn && form("enters-on", [predNode(m.entersOn), ...pairs([["since", m.since === undefined ? undefined : q(m.since)]])]),
     ...m.holds.map((h) => form("hold", pairs([["until", q(h)]]))),

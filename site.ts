@@ -493,6 +493,13 @@ const useCases = (): ReadonlyArray<UseCase> => {
       live: ["/paths/bf-2027/", "Black Friday 2027"],
     },
     {
+      goal: "Give a bonus with the sale",
+      say: "A bonus is a product that comes with buying, declared on the offer with `:until` one of its events. A send names it with `:bonus`. Someone who already owns the bonus skips that send and gets every other one, so keep a bonus in a send of its own. Its end is a real deadline: once a bonus send has told someone, `deadline-kept` locks it.",
+      excerpts: [pickForms("bf-2027", [[/^ {2}\(offer /, Infinity], [/\(send "bf-bonus"/, Infinity]], "bf-2027 bonus")],
+      checks: ["bonus-to-owner", "bonus-declared", "deadline-kept"],
+      live: ["/paths/bf-2027/", "Black Friday 2027"],
+    },
+    {
       goal: "Write to each kind of reader",
       say: "`vary` picks a message by a person's value on a dimension, and `else` covers everyone without one. Marking a vary `:hard` states the value as who they are. halter refuses a commit that does that while a value it states was inferred rather than asked, and a guess that arrives mid-run gets that person the `else`.",
       excerpts: [pickForms("bf-2027", [[/\(send "bf-02"/, Infinity]], "bf-2027 vary")],
@@ -580,6 +587,7 @@ const NEVER: Readonly<Record<string, string>> = {
   "pitch-to-buyer": "It never keeps pitching someone who already bought.",
   "hard-from-inferred": "It never tells people who they are from a guess. A `:hard` value has to have been asked.",
   "synthetic-live": "It never sends to a made-up test person on a live list.",
+  "bonus-to-owner": "It never offers someone a bonus they already own. They skip that send and get the rest.",
   "deadline-kept": "It never moves a deadline people were already told.",
 };
 const neverMd = () => {
@@ -732,9 +740,12 @@ These aren't part of 0.2. They came up while making the seed run, and they're fo
 
 - **Try it.** Drag the slider past the last call, open the Edit tab, change \`:closes\` and press **Commit and move everyone**: it's refused and nothing changes. **Commit for new entrants** still works, because nobody already told runs the new version.
 - Send \`bf-02\` varies by role, \`:hard\`: the podcaster and writer emails tell the reader what they do. Each message it can pick, \`bf-02-podcaster\`, \`bf-02-writer\` and the \`else\`, is declared in the content file with an email rendition, or \`via-has-rendition\` refuses. When the drafter committed it, every role on those two variants had been asked. The desk guessed Fay's and Gus's, but as developer and teacher, which no variant states. [dunn-rm]
-- **Two people were refused at run.** Nobody committed anything; the world changed under a live path.
+- **The template pack comes with the sale.** The offer declares \`(bonus "template-pack" :until close)\`, and \`bf-bonus\`, a send of its own on Monday morning, offers it with \`:bonus "template-pack"\`. Gus bought the pack on its own in August. Every variant of a bonus send carries the bonus, so there's no safe \`else\`: Gus skipped \`bf-bonus\` with "refused: bonus-to-owner, Gus owns template-pack", and got every other send. It raised \`refused-at-run\` like the two below. [dunn-bridge]
+  - When Mara committed Black Friday on 14 September, nobody was on it yet, so the commit was clean. Gus entered at go-live, one transaction later, and from then \`bonus-to-owner\` was true at run, for him and \`bf-bonus\` only. **Try it.** Drag the slider to 27 November and add \`:bonus "template-pack"\` to \`bf-04\` in the Edit tab: the commit is refused, because Gus is still in the sale with \`bf-04\` ahead of him. A \`:bonus\` the offer doesn't declare is refused by \`bonus-declared\`; add the \`(bonus …)\` to the offer and the refusal clears.
+  - The bonus's end is the sale's close, and everyone \`bf-bonus\` reached was told so. Moving the close after Monday morning is refused twice over: once for the close, once for the template-pack bonus.
+- **Two more people were refused at run.** Nobody committed anything; the world changed under a live path.
   - Jo joined the list on 25 November, and half an hour later \`agent:desk\` guessed she's a writer from what she clicked, by \`:rule "role-from-click"\`. That made \`hard-from-inferred\` true for her and \`bf-02\`. On the 26th halter sent her the \`else\`, the plain \`bf-02\`, because telling her she's a writer from a guess is the harm. Her later sends went out as written.
-  - Quin is a QA fixture, \`:person/synthetic\`, imported onto the real list on 30 November by mistake. \`synthetic-live\` is true for her and every send, and an \`else\` doesn't help, so her \`bf-06\` was skipped: "refused at run: synthetic-live, Quin is synthetic". Teo moved her to the test list that morning, but she'd already entered. Every send she had was skipped, so she passed.
+  - Quin is a QA fixture, \`:person/synthetic\`, imported onto the real list on 30 November by mistake. \`synthetic-live\` is true for her and every send, and an \`else\` doesn't help, so her \`bf-06\` was skipped at run: "refused: synthetic-live, Quin is synthetic". Teo moved her to the test list that morning, but she'd already entered. Every send she had was skipped, so she passed.
   - Everyone else's \`bf-02\` went out as written: Ana, whose role was asked, got the podcaster email.
   - Each one raised \`refused-at-run\`, which anyone can waive because the world raised it. Both show in Mara's **Since you last looked** feed, and on the page as alarms. The page's verdict still reads Ships: \`hard-from-inferred\` wasn't true when the drafter committed this version, so it acts at run, for Jo only. [bc-gates]
 - **Try it.** At the head, open the Edit tab, change the title, and type your own words, in quotes, in the why box. **Commit** works, though \`hard-from-inferred\` is true for Jo: a commit answers only for the refusals it adds. Press **Break it** instead and the commit is refused by the three it adds.

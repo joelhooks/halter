@@ -13,6 +13,7 @@ import {
   isAtom,
   isGroup,
   offerId,
+  bonusId,
   SAFE,
   sendId,
   stateId,
@@ -274,8 +275,24 @@ export const readPath = (source: string): Extracted => {
             const cs = instant(ss.keys.get("starts"), ":starts", sub.at);
             mark(o, "offer/class-starts", ss.keys.get("starts")?.at);
             if (cs) next = { ...next, classStarts: cs };
-          } else refuse(sub.at, `(offer …) has no (${sh ?? "?"} …)`, "it takes window, early-bird and class");
+          } else if (sh === "bonus") {
+            // (bonus PRODUCT :until EVENT) (D41); whether EVENT is one of the offer's is a check, as for :deadline
+            only(ss.keys, ["until"], "bonus");
+            const rank = (next.bonuses?.length ?? 0) + 1;
+            const be = bonusId(id, rank);
+            mark(be, undefined, sub.at);
+            const product = name(ss.pos[0], "the bonus product", sub.at);
+            mark(be, "bonus/product", ss.pos[0]?.at);
+            const until = sym(ss.keys.get("until"), "until", sub.at);
+            mark(be, "bonus/until", ss.keys.get("until")?.at ?? sub.at);
+            if (product !== undefined && until !== undefined) next = { ...next, bonuses: [...(next.bonuses ?? []), { product, until }] };
+          } else refuse(sub.at, `(offer …) has no (${sh ?? "?"} …)`, "it takes window, early-bird, class and bonus");
         }
+        // a bonus lasts until one of this offer's own events (D41): an event the offer doesn't have changes nothing
+        const events = [...(next.closes !== undefined || next.windowState !== undefined ? ["close"] : []), ...(next.earlyBird !== undefined ? ["early-bird"] : []), ...(next.classStarts !== undefined ? ["class"] : [])];
+        (next.bonuses ?? []).forEach((b, j) => {
+          if (!events.includes(b.until)) refuse(at.get(`${bonusId(id, j + 1)}|bonus/until`) ?? f.at, `bonus ${b.product} lasts :until ${b.until}, which this offer doesn't have`, `use one of its events: ${events.join(", ") || "none, so give the offer a window"}`);
+        });
         offer = next;
         break;
       }
@@ -330,7 +347,7 @@ export const readPath = (source: string): Extracted => {
           const xh = head(x);
           if (xh === "send") {
             const s = split(x);
-            only(s.keys, ["after", "on", "job", "via", "deadline"], "send");
+            only(s.keys, ["after", "on", "job", "via", "deadline", "bonus"], "send");
             const key = name(s.pos[0], "the message id", x.at);
             if (key === undefined) continue;
             const e = sendId(id, key);
@@ -340,9 +357,10 @@ export const readPath = (source: string): Extracted => {
             if (s.keys.has("after") === s.keys.has("on")) refuse(x.at, `send ${key} needs exactly one of :after or :on`, ":after counts from entering the state; :on is a calendar instant");
             const job = s.keys.has("job") ? sym(s.keys.get("job"), "job", x.at) : undefined;
             const deadline = s.keys.has("deadline") ? sym(s.keys.get("deadline"), "deadline", x.at) : undefined;
+            const bonus = s.keys.has("bonus") ? name(s.keys.get("bonus"), "the :bonus product", x.at) : undefined;
             const via = viaOf(s.keys.get("via"), key, x.at);
             if (via) via.channels.forEach((_, j) => mark(viaId(id, key, j + 1), undefined, s.keys.get("via")?.at));
-            for (const [k, a] of [["after", "send/after"], ["on", "send/on"], ["job", "send/job"], ["via", "send/via-op"], ["deadline", "send/deadline"]] as const) mark(e, a, s.keys.get(k)?.at);
+            for (const [k, a] of [["after", "send/after"], ["on", "send/on"], ["job", "send/job"], ["via", "send/via-op"], ["deadline", "send/deadline"], ["bonus", "send/bonus"]] as const) mark(e, a, s.keys.get(k)?.at);
             let vary: Send["vary"];
             for (const v of s.pos.slice(1)) {
               if (head(v) !== "vary") {
@@ -372,6 +390,7 @@ export const readPath = (source: string): Extracted => {
               ...(on === undefined ? {} : { on }),
               ...(job === undefined ? {} : { job }),
               ...(deadline === undefined ? {} : { deadline }),
+              ...(bonus === undefined ? {} : { bonus }),
               ...(vary === undefined ? {} : { vary }),
             });
           } else if (xh === "to") {
