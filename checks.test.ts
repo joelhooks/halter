@@ -1,5 +1,5 @@
 // Every check gets one planted violation that must fail, and the seed must pass clean.
-// Run: bun checks.test.ts
+// Run: node checks.test.ts
 import { deepStrictEqual, ok } from "node:assert";
 import { asOf, dateMs, diff, facts, history, kw, transact, type Db, type Move, type Op, type Triple, type TxInput } from "./src/db.ts";
 import { judge, PACK, pendingText, refusalKeys, verdict } from "./src/checks.ts";

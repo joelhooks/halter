@@ -1,6 +1,6 @@
 // Build the halter wiki into dist/: one directory per page with index.html and index.md,
 // plus llms.txt and llms-full.txt. Shape after the rat-stack site; content from LANGUAGE.md and the seed.
-// Run: bun site.ts
+// Run: node site.ts
 import { fitSource, form, layout, pairs, readNodes } from "./src/fit.ts";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -978,7 +978,7 @@ The survey isn't the target; the answers are ours to learn from. A non-buyer's r
     group: "system",
     terms: ["check", "refusal", "alarm", "waiver"],
     sources: [...new Set(PACK.flatMap((p) => p.query.cites))],
-    body: `Each check is written in halter's own Datalog and read by the same reader as the paths. A check selects by structure, never by kind: a send with \`:on\` is calendar timed, and a send with \`:after\` is relative. Every check has one planted violation in \`checks.test.ts\` that must fail.^[Run \`bun checks.test.ts\`. It also checks that every seed path has no refusals.]
+    body: `Each check is written in halter's own Datalog and read by the same reader as the paths. A check selects by structure, never by kind: a send with \`:on\` is calendar timed, and a send with \`:after\` is relative. Every check has one planted violation in \`checks.test.ts\` that must fail.^[Run \`node checks.test.ts\`. It also checks that every seed path has no refusals.]
 
 A refusal blocks. An alarm doesn't; the author can ship past it, or waive it on the record with a quote. [hooks-process]
 
@@ -1390,6 +1390,6 @@ writeFileSync(`${here}dist/llms.txt`, llms);
 writeFileSync(`${here}dist/llms-full.txt`, mds.join("\n\n"));
 const size = (f: string) => `${(readFileSync(`${here}dist/${f}`).length / 1024).toFixed(1)} KiB`;
 // Embodied, not copied: a skill page that shares a 12-word run with its skill fails the build.
-execFileSync("bun", [`${here}gate.ts`], { stdio: "inherit" });
+execFileSync(process.execPath, [`${here}gate.ts`], { stdio: "inherit" });
 console.log(`${all.length} pages; app.js ${size("app.js")}; llms-full.txt ${size("llms-full.txt")}`);
 void kw;

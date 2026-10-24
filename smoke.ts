@@ -1,10 +1,10 @@
 // Smoke over the built site in dist/: every page is whole, every local link lands, the
 // styles are the verbatim rat.css plus halter.css, and nothing outside fake data ships.
-// Run after `bun site.ts`: bun smoke.ts
+// Run after `node site.ts`: node smoke.ts
 //
 // Private inputs live outside the repo. HALTER_DENY_FILE names a file of private terms, one per line,
 // that must never reach dist or the tracked tree. Unset, smoke runs the generic checks and says so;
-// `bun smoke.ts --require` (what publish.ts runs) refuses instead. RAT_CSS=path optionally diffs
+// `node smoke.ts --require` (what publish.ts runs) refuses instead. RAT_CSS=path optionally diffs
 // rat.css against a local rat-stack checkout.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -133,12 +133,17 @@ must(!existsSync(`${dist}/research`), "research/ reached dist");
 
 // The tracked tree (UPDATE-33): the files git tracks or would take on the next `git add .`. None may
 // name a home directory, a temp path or the private skills snapshot, or hold a private term, and the
-// local-only files stay out.
+// local-only files stay out. halter runs on Node and pnpm (UPDATE-36), so no tracked file names the old
+// runtime as a word; the pattern brackets one letter so this line doesn't match itself.
+const OLD_RUNTIME = /\bb[u]n\b/i;
 const BOUNDARY = /\/(Users|home)\/[a-z]|\/tmp\/[\w.-]|bc-skill[s]/;
 const LOCAL_ONLY = /^(research|dist|dist-client|shots|node_modules|\.wzrrd)\/|^(UPDATE-\d+|BRIEF|REPORT)\.md$|^layout-report\.json$/;
 let tracked: Array<string> = [];
 try {
-  tracked = execFileSync("git", ["ls-files", "--cached", "--others", "--exclude-standard"], { cwd: here, encoding: "utf8" }).split("\n").filter(Boolean);
+  // a file deleted but not yet committed is in the index and not on disk; the next commit drops it
+  tracked = execFileSync("git", ["ls-files", "--cached", "--others", "--exclude-standard"], { cwd: here, encoding: "utf8" })
+    .split("\n")
+    .filter((f) => f !== "" && existsSync(`${here}${f}`));
 } catch {
   if (REQUIRE) must(false, "git ls-files failed, so the tracked tree wasn't checked");
   else console.error("!! tracked-tree grep skipped: not a git checkout");
@@ -148,11 +153,14 @@ for (const f of tracked) {
   const text = readFileSync(`${here}${f}`, "utf8");
   const m = BOUNDARY.exec(text);
   must(m === null, `tracked tree: ${f} names ${m?.[0]}`);
+  const r = OLD_RUNTIME.exec(text);
+  must(r === null, `tracked tree: ${f} names ${r?.[0]}, at line ${r ? text.slice(0, r.index).split("\n").length : 0}. halter runs on Node and pnpm.`);
   for (const hit of denied(text)) must(false, `tracked tree: ${f} contains ${hit}`);
 }
 
 // The clone gate (UPDATE-34): a clone of the public repo builds by itself. Copy the tracked tree into
 // a fresh temp dir, nothing above it, then install from the lockfile, type-check and run the checks.
+// Any step that fails, or a tool that's missing, fails smoke: the gate fails closed.
 let cloned = "";
 if (tracked.length) {
   const dir = mkdtempSync(join(tmpdir(), "halter-clone-"));
@@ -161,9 +169,9 @@ if (tracked.length) {
       mkdirSync(dirname(join(dir, f)), { recursive: true });
       cpSync(`${here}${f}`, join(dir, f));
     }
-    const run = (what: string, args: ReadonlyArray<string>) => {
+    const run = (what: string, cmd: string, args: ReadonlyArray<string>) => {
       try {
-        execFileSync("bun", [...args], { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 900_000 });
+        execFileSync(cmd, [...args], { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 900_000 });
         return true;
       } catch (e) {
         const out = e as { stdout?: string; stderr?: string };
@@ -172,7 +180,11 @@ if (tracked.length) {
         return false;
       }
     };
-    if (run("bun install --frozen-lockfile", ["install", "--frozen-lockfile"]) && run("tsc", ["x", "tsc", "-p", "tsconfig.json"]) && run("bun checks.test.ts", ["checks.test.ts"]))
+    if (
+      run("pnpm install --frozen-lockfile", "pnpm", ["install", "--frozen-lockfile"]) &&
+      run("pnpm exec tsc", "pnpm", ["exec", "tsc", "-p", "tsconfig.json"]) &&
+      run("node checks.test.ts", process.execPath, ["checks.test.ts"])
+    )
       cloned = `a clean copy installs, type-checks and passes its checks`;
   } finally {
     rmSync(dir, { recursive: true, force: true });

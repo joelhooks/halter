@@ -1,10 +1,10 @@
 // Embodied, not copied. Every /skills/ page is checked against the skill it is about: shingle the
 // page text into 12-word runs and fail if any run also appears in the skill's SKILL.md or references.
 // Quotes are exempt only inside <blockquote> or <q> (markdown: lines starting with ">").
-// Run after `bun site.ts`: bun gate.ts. The snapshot is private: its location comes only from
+// Run after `node site.ts`: node gate.ts. The snapshot is private: its location comes only from
 // HALTER_SKILLS_SNAPSHOT, it never goes into dist, and the repo never names it.
 // Unset, the build skips the gate with one loud line. Publishing is where the harm is, so
-// `bun gate.ts --require` (what publish.ts runs) refuses instead.
+// `node gate.ts --require` (what publish.ts runs) refuses instead.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { skillsFrom } from "./src/skills.ts";
@@ -23,7 +23,7 @@ if (SNAPSHOT === "") {
 }
 // Harm: a skill page that copies the skill or its source material. Fail closed if we can't look.
 if (!existsSync(SNAPSHOT)) {
-  console.error(`gate: no skills snapshot to compare against. Set HALTER_SKILLS_SNAPSHOT to a checkout of the skills repo, then rerun bun gate.ts.`);
+  console.error(`gate: no skills snapshot to compare against. Set HALTER_SKILLS_SNAPSHOT to a checkout of the skills repo, then rerun node gate.ts.`);
   process.exit(1);
 }
 

@@ -13,7 +13,7 @@
 // 1.15 times that block's median gap, a line holding a superscript or margin toggle is no taller than
 // the median, two adjacent sup.cite sit at most 1ch apart, and each mark's tap area, the pseudo-element
 // drawn round it, is still at least 44 by 44px. The mark itself is measured by that area, not its box.
-// Run: bun layout.ts [base-url]. It serves dist itself when no base is given.
+// Run: node layout.ts [base-url]. It serves dist itself when no base is given.
 import { execFileSync, spawn } from "node:child_process";
 import { readdirSync, statSync, writeFileSync } from "node:fs";
 

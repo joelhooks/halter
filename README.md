@@ -11,17 +11,18 @@ This is a sketch. Every person, product and address in it is made up. The editor
 
 ## Run it
 
+It needs Node 24.18 and pnpm 11.3 (`.nvmrc` and `packageManager` pin them).
+
 ```sh
-bun install
-bun site.ts              # build the site into dist/
-bun checks.test.ts       # the checks
-bun props.test.ts        # property tests
-bunx tsc -p tsconfig.json --noEmit
-bun smoke.ts             # the built site: links, rat.css pin, fake data, the tracked tree
-bun layout.ts            # every page at 375px and 1440px in a browser (needs agent-browser)
+pnpm install
+pnpm build               # build the site into dist/
+pnpm test                # the checks, property tests, editor scenes and stories
+pnpm check               # type-check
+pnpm smoke               # the built site: links, rat.css pin, fake data, the tracked tree
+pnpm layout              # every page at 375px and 1440px in a browser (needs agent-browser)
 ```
 
-The copy gate and part of smoke need private inputs: `HALTER_SKILLS_SNAPSHOT` (the skills checkout the skill pages are compared against) and `HALTER_DENY_FILE` (private terms, one per line). Without them the build and smoke say what they skipped. `bun publish.ts` refuses to publish unless both are set and every check passes.
+The copy gate and part of smoke need private inputs: `HALTER_SKILLS_SNAPSHOT` (the skills checkout the skill pages are compared against) and `HALTER_DENY_FILE` (private terms, one per line). Without them the build and smoke say what they skipped. `pnpm wzrrd` refuses to publish unless both are set and every check passes.
 
 ## Credits
 

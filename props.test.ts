@@ -1,4 +1,4 @@
-// Property tests for halter v2. Run: bun props.test.ts
+// Property tests for halter v2. Run: node props.test.ts
 // The printing laws from LANGUAGE.md: read(print(facts)) = facts, and print(read(text)) = text for canonical text.
 import { deepStrictEqual, ok } from "node:assert/strict";
 import fc from "fast-check";
@@ -21,6 +21,9 @@ const H = 3_600_000;
 const keys = (ts: ReadonlyArray<Triple>) => sortTriples(ts).map(tripleKey);
 let count = 0;
 // ONLY=words runs the properties whose name has them; RUNS=n raises a property's run count.
+// Node's deepStrictEqual compares prototypes, and fast-check can build records with a null prototype.
+// Every record here is a plain object, so a round trip compares like with like.
+const record = <T>(model: { [K in keyof T]: fc.Arbitrary<T[K]> }) => fc.record(model, { noNullPrototype: true });
 const prop = (name: string, f: () => void) => {
   if (process.env.ONLY && !name.includes(process.env.ONLY)) return;
   const t0 = Date.now();
@@ -47,14 +50,14 @@ const atom: fc.Arbitrary<Pred> = fc.constantFrom(...(Object.keys(ATOMS) as Array
 const pred: fc.Arbitrary<Pred> = fc.letrec<{ p: Pred }>((tie) => ({
   p: fc.oneof(
     { weight: 4, arbitrary: atom },
-    { weight: 1, arbitrary: fc.record({ name: fc.constantFrom("and" as const, "or" as const), kids: fc.array(tie("p"), { minLength: 1, maxLength: 3 }) }) },
+    { weight: 1, arbitrary: record({ name: fc.constantFrom("and" as const, "or" as const), kids: fc.array(tie("p"), { minLength: 1, maxLength: 3 }) }) },
     { weight: 1, arbitrary: tie("p").map((k): Pred => ({ name: "not", kids: [k] })) },
   ),
 })).p;
 
 const via: fc.Arbitrary<Via> = fc.oneof(
   fc.constantFrom(...CHANNELS).map((c): Via => ({ channels: [c] })),
-  fc.record({ op: fc.constantFrom("or" as const, "and" as const), channels: fc.shuffledSubarray([...CHANNELS], { minLength: 2 }) }),
+  record({ op: fc.constantFrom("or" as const, "and" as const), channels: fc.shuffledSubarray([...CHANNELS], { minLength: 2 }) }),
 );
 const sendKey = fc.constantFrom("01", "02", "b1", "p1", "p2", "w1");
 const send = (key: string): fc.Arbitrary<Send> =>
@@ -66,10 +69,10 @@ const send = (key: string): fc.Arbitrary<Send> =>
       via,
       deadline: maybe(fc.constantFrom(...EVENTS, "soon")),
       vary: maybe(
-        fc.record({
+        record({
           dim: slug,
           hard: fc.boolean(),
-          cases: fc.uniqueArray(fc.record({ value: fc.constantFrom("podcaster", "writer", "unknown", "x"), message: word }), { maxLength: 3, selector: (c) => c.value }),
+          cases: fc.uniqueArray(record({ value: fc.constantFrom("podcaster", "writer", "unknown", "x"), message: word }), { maxLength: 3, selector: (c) => c.value }),
           else: maybe(word),
         }),
       ),
@@ -82,10 +85,10 @@ const path: fc.Arbitrary<Path> = fc
     title: word,
     list: slug,
     offer: maybe(
-      fc.record({
+      record({
         product: slug,
         pricing: word,
-        window: fc.oneof(fc.constant({}), slug.map((windowState) => ({ windowState })), fc.record({ opens: maybe(instant), closes: maybe(instant) }).map((w) => strip(w))),
+        window: fc.oneof(fc.constant({}), slug.map((windowState) => ({ windowState })), record({ opens: maybe(instant), closes: maybe(instant) }).map((w) => strip(w))),
         earlyBird: maybe(instant),
         classStarts: maybe(instant),
       }),
@@ -96,15 +99,15 @@ const path: fc.Arbitrary<Path> = fc
     names: fc.uniqueArray(fc.constantFrom("bridge", "pitch", "note", "ask", "warm-2"), { minLength: 1, maxLength: 3 }),
     keys: fc.shuffledSubarray(["01", "02", "b1", "p1", "p2", "w1"], { minLength: 1 }),
     exitOn: maybe(pred),
-    target: maybe(fc.record({ pred, within: maybe(dur) })),
+    target: maybe(record({ pred, within: maybe(dur) })),
     guard: fc.array(
-      fc.record({ when: pred, skip: fc.boolean(), reason: maybe(word), for: dur }).map(
+      record({ when: pred, skip: fc.boolean(), reason: maybe(word), for: dur }).map(
         (g): GuardClause => (g.skip ? (strip({ when: g.when, action: "skip" as const, reason: g.reason }) as GuardClause) : { when: g.when, action: "defer", for: g.for }),
       ),
       { maxLength: 3 },
     ),
     rate: fc.nat({ max: 2000 }),
-    ramp: maybe(fc.record({ rampTo: fc.nat({ max: 5000 }), rampStep: fc.nat({ max: 500 }), rampEvery: dur })),
+    ramp: maybe(record({ rampTo: fc.nat({ max: 5000 }), rampStep: fc.nat({ max: 500 }), rampEvery: dur })),
     waives: fc.uniqueArray(fc.constantFrom("few-values", "teach-before-fix", "rest-days"), { maxLength: 2 }),
   })
   .chain((r) => {
@@ -113,7 +116,7 @@ const path: fc.Arbitrary<Path> = fc
     const to: fc.Arbitrary<To> = fc
       .record({ target: fc.constantFrom(...r.names, "closed"), timed: fc.boolean(), after: dur, when: pred })
       .map((t) => (t.timed ? { target: t.target, after: t.after } : { target: t.target, when: t.when }));
-    return fc.tuple(...states.map((st) => fc.record({ sends: fc.tuple(...st.keys.map(send)), tos: fc.array(to, { maxLength: 2 }) }))).map(
+    return fc.tuple(...states.map((st) => record({ sends: fc.tuple(...st.keys.map(send)), tos: fc.array(to, { maxLength: 2 }) }))).map(
       (built): Path =>
         strip({
           id: r.id,
@@ -140,9 +143,9 @@ const ref = fc.constantFrom("p1.email", "a \"quoted\" ref", "ünïcode", "", "li
 const message: fc.Arbitrary<Message> = fc
   .record({
     id: fc.constantFrom("p1", "p2", "b1", "day-1", "bf-02-writer", "x"),
-    email: maybe(fc.record({ subject: word, body: ref })),
-    sms: maybe(fc.record({ body: ref })),
-    site: maybe(fc.record({ page: fc.constantFrom("small-tools/welcome", "five-day-tools/day-1", "") })),
+    email: maybe(record({ subject: word, body: ref })),
+    sms: maybe(record({ body: ref })),
+    site: maybe(record({ page: fc.constantFrom("small-tools/welcome", "five-day-tools/day-1", "") })),
   })
   .map((m) => strip(m) as Message);
 const messages = fc.uniqueArray(message, { maxLength: 5, selector: (m) => m.id }).map((ms) => [...ms].sort((a, b) => (a.id < b.id ? -1 : 1)));
@@ -237,13 +240,13 @@ prop("no sequence of agent-only transactions lowers the alarm count", () => {
     return PATHS.map((id) => { const p = fromFacts(id, f); return p ? verdict(printPath(p), { facts: f, history: h }).alarms : 0; });
   };
   const floor = alarms(base);
-  const op = fc.record({
+  const op = record({
     // weighted toward bf-2027's live few-values alarm, the one an agent's waiver would lower
     id: fc.oneof(fc.constant("bf-2027"), fc.constantFrom(...PATHS)),
     check: fc.oneof(fc.constant("few-values"), fc.constantFrom("teach-before-fix", "rest-days", "post-close-survey", "fake-deadline")),
     added: fc.boolean(),
   });
-  const agentTx = fc.record({
+  const agentTx = record({
     who: fc.constantFrom("agent:drafter", "agent:desk", "agent:halter"),
     why: fc.constantFrom('Mara: "Waive it."', 'Teo said "ship it"', "no quote at all", '“Six roles is fine.”'),
     ops: fc.array(op, { minLength: 1, maxLength: 3 }),
@@ -276,7 +279,7 @@ const pathEvents = (d: Db, person: string, onPath?: string, named = false) =>
 
 prop("a move reads back from its printed form", () => {
   const st = fc.constantFrom("bridge", "pitch", "offer", "warm-2");
-  const move = fc.record({ path: fc.constantFrom("small-tools-bridge", "bf-2027"), toVersion: maybe(fc.nat({ max: 400 })), fromVersion: maybe(fc.nat({ max: 400 })), from: maybe(st), to: maybe(st), map: maybe(fc.array(fc.tuple(st, st), { minLength: 1, maxLength: 3 })) }).map((m) => strip(m) as Move);
+  const move = record({ path: fc.constantFrom("small-tools-bridge", "bf-2027"), toVersion: maybe(fc.nat({ max: 400 })), fromVersion: maybe(fc.nat({ max: 400 })), from: maybe(st), to: maybe(st), map: maybe(fc.array(fc.tuple(st, st), { minLength: 1, maxLength: 3 })) }).map((m) => strip(m) as Move);
   fc.assert(fc.property(move, (m) => deepStrictEqual(readMove(moveText(m)).move, m)), runs);
 });
 
@@ -312,7 +315,7 @@ prop("no sequence of edits without moves changes the path events of anyone alrea
     { path: "fieldkit-c7", from: "2027-02-11T00:00Z", to: "2027-03-14T00:00Z" },
     { path: "bf-2027", from: "2027-10-26T00:00Z", to: "2027-11-28T00:00Z" },
   ] as const;
-  const editArb = fc.record({ w: fc.nat({ max: WINDOWS.length - 1 }), at: fc.double({ min: 0, max: 0.999, noNaN: true }), kind: fc.nat({ max: 3 }), pick: fc.nat({ max: 20 }), by: fc.integer({ min: 1, max: 30 }) });
+  const editArb = record({ w: fc.nat({ max: WINDOWS.length - 1 }), at: fc.double({ min: 0, max: 0.999, noNaN: true }), kind: fc.nat({ max: 3 }), pick: fc.nat({ max: 20 }), by: fc.integer({ min: 1, max: 30 }) });
   const mutate = (p: Path, kind: number, pick: number, by: number): Path => {
     const st = p.states[pick % p.states.length];
     if (!st) return p;
@@ -357,7 +360,7 @@ prop("every send/sent has a sent delivery behind it, and every delivery's conten
   // random content edits dropped into the seed, after every message exists. p1 is left out: Teo's own fix
   // retracts the exact body it replaces, and a random edit before it would leave nothing to retract.
   const MSGS = ["p2", "p3", "b1", "bf-02", "bf-03", "day-1"];
-  const edit = fc.record({ m: fc.constantFrom(...MSGS), min: fc.integer({ min: 0, max: 60 * 24 * 70 }), n: fc.nat(99) }).map(({ m, min, n }): TxInput => ({
+  const edit = record({ m: fc.constantFrom(...MSGS), min: fc.integer({ min: 0, max: 60 * 24 * 70 }), n: fc.nat(99) }).map(({ m, min, n }): TxInput => ({
     who: "teo",
     at: `${new Date(Date.UTC(2027, 9, 2) + min * 60_000).toISOString().slice(0, 16)}Z`,
     source: "assumed",
@@ -391,7 +394,7 @@ prop("every path/finished has a sent delivery on that path, and nobody both fini
   // random holds dropped into the seed. The bridge's own hold is dropped by Teo on 21 November, so a
   // random bridge hold starts after that; the other paths have none to collide with.
   const PATHS_H = ["small-tools-bridge", "five-day-tools", "fieldkit-c7", "bf-2027", "why-didnt-you-buy", "small-tools-start"];
-  const holdArb = fc.record({ p: fc.constantFrom(...PATHS_H), min: fc.integer({ min: 0, max: 60 * 24 * 60 }), hours: fc.integer({ min: 1, max: 24 * 30 }) }).map(({ p, min, hours }): TxInput => {
+  const holdArb = record({ p: fc.constantFrom(...PATHS_H), min: fc.integer({ min: 0, max: 60 * 24 * 60 }), hours: fc.integer({ min: 1, max: 24 * 30 }) }).map(({ p, min, hours }): TxInput => {
     const from = p === "small-tools-bridge" ? Date.UTC(2027, 10, 21, 10) : Date.UTC(2027, 1, 1);
     const at = from + min * 60_000 * (p === "small-tools-bridge" ? 0.25 : 5);
     const iso = (ms: number) => `${new Date(Math.floor(ms / 60_000) * 60_000).toISOString().slice(0, 16)}Z`;
@@ -424,7 +427,7 @@ prop("no counting waiver's author wrote a fact its check's current findings poin
   const ACTORS = ["mara", "teo", "agent:drafter", "agent:judge"];
   const ALARMS = PACK.filter((x) => x.query.severity === "alarm").map((x) => x.query.name);
   const POINTED = new Set(PACK.flatMap((x) => (x.query.at?.a ? [x.query.at.a] : [])));
-  const step = fc.record({ path: fc.constantFrom(...PATHS), who: fc.constantFrom(...ACTORS), waive: fc.boolean(), check: fc.constantFrom(...ALARMS), pick: fc.nat(500) });
+  const step = record({ path: fc.constantFrom(...PATHS), who: fc.constantFrom(...ACTORS), waive: fc.boolean(), check: fc.constantFrom(...ALARMS), pick: fc.nat(500) });
   const name = (v: unknown) => (v instanceof Kw ? v.name : String(v));
   // the oracle: re-run each check's query, collect the facts its findings point at, read their authors
   const raisers = (d: Db, id: string, check: string): Set<string> => {
@@ -683,8 +686,8 @@ prop("enters-on never enters someone whose only matching acts happened before go
     { e, a: "act/at", v: at, added },
     { e, a: "act/source", v: Kw.of("observed"), added },
   ];
-  const step = fc.record({ kind: fc.constantFrom("write", "cleanup", "retract", "fix-at", "tag"), act: fc.integer({ min: 1, max: 2 }), gap: fc.integer({ min: 1, max: 60 * 24 * 25 }), old: fc.integer({ min: 0, max: 1_000_000 }) });
-  const scenario = fc.record({
+  const step = record({ kind: fc.constantFrom("write", "cleanup", "retract", "fix-at", "tag"), act: fc.integer({ min: 1, max: 2 }), gap: fc.integer({ min: 1, max: 60 * 24 * 25 }), old: fc.integer({ min: 0, max: 1_000_000 }) });
+  const scenario = record({
     since: fc.option(fc.integer({ min: 0, max: 60 * 24 * 500 }), { nil: undefined }),
     steps: fc.array(step, { minLength: 1, maxLength: 8 }),
   });
@@ -739,8 +742,8 @@ prop("a refusal at run stops only the refused send for the person it names: nobo
   const bf = fromFacts("bf-2027", facts(base));
   const hard = new Set(bf?.states.flatMap((st) => st.sends).flatMap((sd) => (sd.vary?.hard ? sd.vary.cases.map((c) => c.message) : [])) ?? []);
   ok(hard.size > 0, "bf-2027 has a :hard vary");
-  const answer = fc.record({ value: fc.constantFrom("podcaster", "writer", "developer"), source: fc.constantFrom("asked", "inferred"), day: fc.integer({ min: 0, max: 11 }) });
-  const newcomer = fc.record({ synthetic: fc.boolean(), answers: fc.array(answer, { maxLength: 2 }) });
+  const answer = record({ value: fc.constantFrom("podcaster", "writer", "developer"), source: fc.constantFrom("asked", "inferred"), day: fc.integer({ min: 0, max: 11 }) });
+  const newcomer = record({ synthetic: fc.boolean(), answers: fc.array(answer, { maxLength: 2 }) });
   fc.assert(
     fc.property(fc.array(newcomer, { minLength: 1, maxLength: 3 }), (people) => {
       const inputs: Array<TxInput> = [];
@@ -802,7 +805,7 @@ prop("no delivery of a :bonus send ever goes to someone with a bought act for th
   const bonusSends = new Set((fromFacts("bf-2027", facts(base))?.states.flatMap((st) => st.sends) ?? []).filter((x) => x.bonus !== undefined).map((x) => `bf-2027/${x.key}`));
   ok(bonusSends.size > 0, "bf-2027 has a bonus send");
   const iso = (h: number) => `${new Date(Date.UTC(2027, 10, 25, 0) + h * H).toISOString().slice(0, 16)}Z`;
-  const buyer = fc.record({ buys: fc.option(fc.integer({ min: 0, max: 24 * 7 }), { nil: undefined }), refund: fc.option(fc.integer({ min: 1, max: 72 }), { nil: undefined }) });
+  const buyer = record({ buys: fc.option(fc.integer({ min: 0, max: 24 * 7 }), { nil: undefined }), refund: fc.option(fc.integer({ min: 1, max: 72 }), { nil: undefined }) });
   fc.assert(
     fc.property(fc.array(buyer, { minLength: 1, maxLength: 3 }), (people) => {
       const inputs: Array<TxInput> = [];
@@ -846,7 +849,7 @@ prop("objection-has-fix is quiet exactly when every objection value has a fix or
   const bridge = fromFacts("small-tools-bridge", fs0);
   if (!bridge) throw new Error("no bridge");
   const VALUES = ["no-time", "too-expensive", "not-for-me", "didnt-see-it", "bought-elsewhere"];
-  const sendArb = fc.record({ job: fc.constantFrom("fix", "proof", "faq", "teach", "last-call"), answers: fc.subarray(VALUES, { maxLength: 3 }) });
+  const sendArb = record({ job: fc.constantFrom("fix", "proof", "faq", "teach", "last-call"), answers: fc.subarray(VALUES, { maxLength: 3 }) });
   fc.assert(
     fc.property(fc.subarray(VALUES), fc.array(sendArb, { minLength: 3, maxLength: 3 }), (marked, picks) => {
       // the pitch's three sends, re-jobbed and answering random values; a last-call keeps its deadline
@@ -902,7 +905,7 @@ prop("every answered act with act/delivery points at a delivery of a send whose 
   const people = [...new Set(fs0.filter((t) => t.a === "person/name").map((t) => String(t.e)))];
   const sends = [...new Set(fs0.filter((t) => t.a === "send/key").map((t) => `${String(val(fs0, t.e, "send/path"))}/${String(t.v)}`))];
   const values = [...new Set(fs0.filter((t) => t.a === "dim/values").map((t) => String(t.v))), "my-cat-ate-it", "unsure"];
-  const replyArb = fc.record({
+  const replyArb = record({
     to: fc.oneof(fc.constantFrom(...delivered), fc.tuple(fc.constantFrom(...people), fc.constantFrom(...sends))),
     value: fc.constantFrom(...values),
     how: fc.constantFrom("reply" as const, "form" as const, "click" as const),
@@ -918,7 +921,12 @@ prop("every answered act with act/delivery points at a delivery of a send whose 
         deepStrictEqual(out.asked, asked.has(reply.send), JSON.stringify(reply));
         deepStrictEqual(out.ops.some((o) => o.a === "act/delivery"), out.asked && got, JSON.stringify(reply));
         const x = transact(db, { who: "adapter:mail", at: `2028-03-16T0${i}:00Z`, why: "reply", source: out.asked ? "asked" : "observed", ops: out.ops });
-        if (!x.ok) throw new Error(x.error);
+        if (!x.ok) {
+          // the same click twice on a send that asks nothing adds no fact, and the transactor refuses an
+          // empty commit; an asked answer always carries its own act/at, so it never lands here
+          ok(!out.asked && x.error.startsWith("refused: nothing to commit"), x.error);
+          return;
+        }
         db = x.db;
       });
       holdsFor(facts(db));

@@ -1,8 +1,12 @@
 // The facts are the truth. A db is a log of transactions; everything else is a view of it.
 
 export class Kw {
+  // declared first, where the parameter property put it, so the emitted class is unchanged
+  readonly name: string;
   private static readonly interned = new Map<string, Kw>();
-  private constructor(readonly name: string) {}
+  private constructor(name: string) {
+    this.name = name;
+  }
   static of(name: string): Kw {
     let k = Kw.interned.get(name);
     if (k === undefined) {
